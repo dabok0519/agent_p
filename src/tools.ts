@@ -1,38 +1,14 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import { MOCK_PURCHASE_ORDERS, MOCK_INVOICES, MOCK_GOODS_RECEIPTS } from './mock-data.js';
+import { PurchaseOrderSchema, InvoiceSchema, GoodsReceiptSchema } from './schemas.js';
 
-// 문서 스키마 — 도구의 outputSchema 와 agent 의 최종 Output.object 가 같은 정의를 공유한다.
-export const PurchaseOrderSchema = z.object({
-  poNumber: z.string(),
-  vendor: z.string(),
-  status: z.enum(['OPEN', 'COMPLETED', 'BLOCKED']),
-  amount: z.number(),
-  currency: z.string(),
-  orderDate: z.string().describe('구매 오더 문서일자. YYYY-MM-DD'),
-});
-
-export const InvoiceSchema = z.object({
-  invoiceNumber: z.string(),
-  poNumber: z.string(),
-  grNumber: z.string().nullable().describe('참조 입고 문서 번호. null 이면 입고 없이 들어온 송장.'),
-  vendor: z.string(),
-  amount: z.number(),
-  currency: z.string(),
-  status: z.enum(['POSTED', 'PARKED', 'BLOCKED']),
-  invoiceDate: z.string(),
-});
-
-export const GoodsReceiptSchema = z.object({
-  grNumber: z.string(),
-  poNumber: z.string(),
-  material: z.string(),
-  quantity: z.number(),
-  unit: z.string(),
-  receiptDate: z.string(),
-});
-
-// 도구
+// 조회 도구 3개. auto / required 두 방식이 그대로 공유한다.
+// 모델은 description 만 보고 도구를 고르므로, 한쪽만 설명을 손대면
+// 두 방식의 차이가 toolChoice 때문인지 설명 때문인지 구분되지 않는다.
+//
+// 종료용 도구는 여기 두지 않는다. auto 는 필요 없고,
+// required 의 submit 은 required/agent.ts 안에 있다.
 
 // 구매오더 조회 도구
 export const searchPurchaseOrders = tool({
@@ -105,8 +81,6 @@ export const searchInvoices = tool({
   },
 });
 
-// 송장 조회 도구 
-
 
 // 입고 조회 도구
 export const searchGoodsReceipts = tool({
@@ -131,14 +105,4 @@ export const searchGoodsReceipts = tool({
     if (material) result = result.filter((gr) => gr.material.includes(material)); // 사용자의 입력이 완벽하지 않을 경우
     return { count: result.length, goodsReceipts: result };
   },
-});
-
-// 종료 신호용 도구
-// execute 가 "있어야" 한다. 없으면 loop 가 여기서 끊겨 finishReason 이 'tool-calls' 로 남고,
-// output(Output.object) 은 마지막 step 이 'stop' 일 때만 파싱되므로 죽는다.
-// 실제 종료는 agent.ts 의 prepareStep 이 이 호출을 보고 toolChoice 를 'none' 으로 바꿔서 시킨다.
-export const done = tool({
-  description: '필요한 데이터 조회를 모두 마쳤을 때 호출한다. 이걸 부르면 다음 단계에서 최종 답변을 작성하게 된다.',
-  inputSchema: z.object({}),
-  execute: async () => ({ ok: true }),
 });

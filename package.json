@@ -5,7 +5,9 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "tsx src/agent.ts",
+    "start": "tsx src/required/agent.ts",
+    "start:required": "tsx src/required/agent.ts",
+    "start:auto": "tsx src/auto/agent.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
