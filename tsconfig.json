@@ -14,8 +14,8 @@
 
     // Other Outputs
     "sourceMap": true,
-    "declaration": true,
-    "declarationMap": true,
+    // "declaration": true,       // tsx 로만 실행하고 emit 하지 않음 + provider 익명 클래스 타입이 d.ts 생성을 막음 (TS4094)
+    // "declarationMap": true,
 
     // Stricter Typechecking Options
     "noUncheckedIndexedAccess": true,
