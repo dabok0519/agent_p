@@ -1,0 +1,24 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "agent: required",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/required/agent.ts",
+      "runtimeArgs": ["--import", "tsx"],
+      "args": ["현재 송장이 없는 구매 오더를 조회해서 정리해줘."],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "agent: auto",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/auto/agent.ts",
+      "runtimeArgs": ["--import", "tsx"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    }
+  ]
+}
