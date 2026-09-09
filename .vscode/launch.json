@@ -2,23 +2,20 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "agent: required",
+      "name": "agent",
       "type": "node",
       "request": "launch",
-      "program": "${workspaceFolder}/src/required/agent.ts",
+      "program": "${workspaceFolder}/src/cli.ts",
       "runtimeArgs": ["--import", "tsx"],
-      "args": ["현재 송장이 없는 구매 오더를 조회해서 정리해줘."],
+      // 질문을 표준입력으로 받으므로 integratedTerminal 이어야 입력이 된다.
+      // Debug Console 에서는 입력을 못 받아 그대로 멈춘다.
       "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
-    },
-    {
-      "name": "agent: auto",
-      "type": "node",
-      "request": "launch",
-      "program": "${workspaceFolder}/src/auto/agent.ts",
-      "runtimeArgs": ["--import", "tsx"],
-      "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+      // 중단점 없이 첫 줄부터 F10 으로 훑고 싶으면 true 로.
+      "stopOnEntry": false,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      // zod 가 new Function 으로 만든 검증 코드(VM…)는 경로가 없어 skipFiles 에 안 걸린다.
+      // 소스맵으로 원본에 매핑 안 되는 코드는 건너뛰게 한다.
+      "smartStep": true
     }
   ]
 }
