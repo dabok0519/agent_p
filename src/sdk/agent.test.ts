@@ -12,6 +12,9 @@ import { ask } from './agent.js';
 //   4500000003 Hyundai  — 오더 42,000 = 송장 30,000 + 12,000
 //   5100000002, 5100000004 — grNumber 가 null (입고 참조 없음)
 
+
+
+
 describe('SAP 에이전트', { concurrency: true }, () => {
 
   it('송장이 없는 구매오더는 4500000004 하나다', async () => {

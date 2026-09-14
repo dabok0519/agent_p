@@ -34,6 +34,16 @@ export const searchPurchaseOrders = tool({
     return { count: result.length, orders: result }; //굳이 JSON구조로 반환 안해도 될까 ( 자유 텍스트를 반환하지 않을 것 같음 )
   },
 });
+// 조회 시에 복잡도 테스트 필요 ex) sap 쪽에 개발도구를 만들 때 call graph를 배열로 만들려면 배열안에 배열 ... 등등 이 존재할 수 있음 
+// 거기서 code handling을 찾아줘 ~~ 이런걸로 인해 복잡도가 높아질 수 밖에 없음 
+// 올리는 이유 : 테스트 provider가 스키마가 복잡하면 뻗는 경우가 있다. ( json 파싱할 때 오류가 발생할 수 있다 )
+// 미리 점검하는 게 좋음 
+// 점검해봤는데 하나만 좀 깊게 받아줄 수 있음 (예시)
+// 도구 만들 때 input 스키마를 너무 복잡하게 만들지 말자 () -> 너무 심플한 스키마 밖에 지원 안되는 서버는 재끼자 
+// 객체안에 배열 , 배열안에 객체 , + 1  
+// 너무 claude한테 생각을 맡기지 말자 
+// 멀티 턴이 안됨 -> cli 도구를 붙여서 멀티턴 + sicf api agent를 만들어보자 
+// cli도구는 클로드 코드 처럼 (예시임) npm run cli를 하면 cli가 실행이 되고 답변 기반으로 계속 대화할 수 있게 구현해라 
 
 // 도구: 송장 조회
 export const searchInvoices = tool({
@@ -94,3 +104,28 @@ export const searchGoodsReceipts = tool({
     return { count: result.length, goodsReceipts: result };
   },
 });
+
+
+
+// 밴더 평가서 보고서 서칭 api
+// export const searchVendorAnay = tool({
+//   description: '이 도구는 유사도 검색을 지원한다. ~파라미터 서치키워즈,배열에 문장을 입력하면 회사 문서파일 시스템에서 문서를 찾아온다',
+//   inputSchema: z.object({
+//     VendorNum: z.string().optional()
+//       .describe('참조 구매 오더 번호. 생략하면 전체 조회.'),
+//     SearchKeywords: z.array(z.string()).optional()
+//       .describe('입력한 키워드 배열에 문장을 입력하면 회사 문서파일 시스템에서 문서를 찾아온다.'),
+//   }),
+//   outputSchema: z.object({
+//     count: z.number(),
+//     goodsReceipts: z.array(GoodsReceiptSchema),
+//   }),
+//   execute: async ({ poNumber, grNumber, material }) => {
+//     console.log(`  [tool 실행] searchGoodsReceipts(poNumber=${poNumber ?? '전체'}, grNumber=${grNumber ?? '전체'}, material=${material ?? '전체'})`);
+//     let result = MOCK_GOODS_RECEIPTS; // 조건부 누적 필터링
+//     if (poNumber) result = result.filter((gr) => gr.poNumber === poNumber);
+//     if (grNumber) result = result.filter((gr) => gr.grNumber === grNumber);
+//     if (material) result = result.filter((gr) => gr.material.includes(material)); // 사용자의 입력이 완벽하지 않을 경우
+//     return { count: result.length, goodsReceipts: result };
+//   },
+// });

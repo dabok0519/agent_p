@@ -32,6 +32,7 @@ const SYSTEM = [
  * - steps : step 원본. 흐름을 찍거나 도구 결과를 볼 때 쓴다
  */
 export async function ask(question: string) {
+
   const result = await generateText({
     model,
     system: SYSTEM,
@@ -40,7 +41,7 @@ export async function ask(question: string) {
     temperature: 0,
     stopWhen: stepCountIs(MAX_STEPS),
   });
-
+  
   const tools: string[] = [];
   for (const step of result.steps) {
     for (const call of step.toolCalls) {

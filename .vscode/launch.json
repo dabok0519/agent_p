@@ -2,19 +2,43 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "agent",
+      // F5 는 지금 편집기에 열려 있는 파일을 돌린다. 특정 파일로 고정하지 않는다.
+      "name": "현재 파일",
       "type": "node",
       "request": "launch",
-      "program": "${workspaceFolder}/src/cli.ts",
+      "program": "${file}",
       "runtimeArgs": ["--import", "tsx"],
-      // 질문을 표준입력으로 받으므로 integratedTerminal 이어야 입력이 된다.
-      // Debug Console 에서는 입력을 못 받아 그대로 멈춘다.
+      // 출력이 길어 Debug Console 보다 터미널이 보기 편하다.
       "console": "integratedTerminal",
       // 중단점 없이 첫 줄부터 F10 으로 훑고 싶으면 true 로.
       "stopOnEntry": false,
       "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
-      // zod 가 new Function 으로 만든 검증 코드(VM…)는 경로가 없어 skipFiles 에 안 걸린다.
-      // 소스맵으로 원본에 매핑 안 되는 코드는 건너뛰게 한다.
+      "smartStep": true
+    },
+    {
+      // 선언만 있는 파일을 열어 둔 채로도 도구 왕복을 돌리고 싶을 때 고른다.
+      "name": "main",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/fetch/main.ts",
+      "runtimeArgs": ["--import", "tsx"],
+      "console": "integratedTerminal",
+      "stopOnEntry": false,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "smartStep": true
+    },
+    {
+      // 시험 파일로 고정. 어느 파일을 보고 있든 이걸 고르면 시험이 돈다.
+      // --test 를 안 붙인다. 붙이면 자식 프로세스에서 돌아 디버거가 못 붙는다.
+      // node 는 시험 파일을 직접 돌려도 안의 시험을 실행한다.
+      "name": "tools.test",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/fetch/tools.test.ts",
+      "runtimeArgs": ["--import", "tsx"],
+      "console": "integratedTerminal",
+      "stopOnEntry": false,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
       "smartStep": true
     }
   ]
