@@ -128,6 +128,7 @@ export async function fetchPurchaseOrders(q: PurchaseOrderQuery): Promise<Purcha
   for (let i = 0; i < json.length; i++) {
     const one = json[i];
 
+    // one == 배열 한 껍데기를 벗긴 후 행 한 줄 {item , [] ..등등 }
     if (typeof one !== 'object' || one === null) {
       throw new Error(`줄 ${i}: 객체가 아니다 ${JSON.stringify(one)}`);
     }

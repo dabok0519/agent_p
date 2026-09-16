@@ -20,6 +20,11 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createInterface } from 'node:readline/promises';
 
 /**
+ * 대화 이력 저장소(SQLite). 세션 목록·불러오기·저장.
+ */
+import { openHistory, type SessionRow } from './history.js';
+
+/**
  * 모델에게 미리 주는 지시. 질문보다 앞에 둬야 그 뒤 전부에 적용된다.
  * 여러 줄을 줄바꿈으로 이어 한 덩어리 글자로 만든다.
  */
@@ -28,6 +33,7 @@ const SYSTEM = [
   '답에 쓰는 값은 도구가 반환한 결과에서 가져온다. 기억이나 추측으로 채우지 마라.',
   '조회하지 않은 대상을 "없다"고 단정하지 마라. 확인이 필요하면 도구를 먼저 불러라.',
   '필요한 데이터를 다 모으기 전에 결론을 내지 마라. 부분 조회 상태로 답하지 마라.',
+  '도구의 정보를 보고 사용자의 응답에 답하기 힘든 경우 사용자에게 다시 정확한 값을 되묻는다.',
   '구매오더 번호는 44 또는 45로 시작하는 10자리다(4410000000, 4420000008). 번호는 반드시 글자로 넣는다.',
   /** TODO: 공급업체가 이름이 아니라 코드(BP2100)라는 것. 이름으로 물어오면 어떻게 하라고 할지 */
   '공급업체(Vendor) 코드는 BP로 시작하며 , BP나 숫자가 아닌 이름으로 공급업체를 물을 시 사용자에게 이름은 존재하지 않는다고 반환한다. ',
@@ -211,9 +217,93 @@ function textOf(res: object): string {
 }
 
 /**
+ * 첫 왕복이 끝난 뒤 제목 한 줄을 모델에게 짓게 한다. 도구 없이 부른다. 대화 이력은 안 넘기고 두 줄짜리 새 대화다.
+ * 실패해도 throw 하지 않고 첫 질문 글자를 돌려준다. 제목 실패가 대화 실패가 되면 안 된다.
+ */
+async function makeTitle(question: string, answer: string): Promise<string> {
+  try {
+    const res = await ask([
+      { role: 'system', content: ' 대화의 제목을 한국어 명사구 15자 이내로, 따옴표·마침표 없이 한 줄만 답한다.' },
+      /** 답은 앞 500자만. 제목엔 그만큼이면 충분하고 토큰을 아낀다 */
+      { role: 'user', content: `질문: ${question}\n답: ${answer.slice(0, 500)}` },
+    ]);
+    /** 모델이 따옴표나 줄바꿈을 섞어도 한 줄로 만든다. 30자 넘으면 자른다 */
+    const raw = res.choices[0]?.message.content ?? '';
+    const title = raw.replace(/["'\n]/g, '').trim().slice(0, 30);
+    return title || question;
+  } catch {
+    return question;
+  }
+}
+
+
+
+
+/**
  * 터미널 입출력 통로를 연다. 다 쓰면 close 해야 프로그램이 끝난다.
  */
 const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+/**
+ * 이력 DB. 파일이 없으면 만든다. 실행 위치 기준 경로라 저장소 루트에서 돌린다.
+ */
+/** TODO: DB 파일 경로. .gitignore 에 넣을 것 */
+const history = openHistory('agent-history.db');
+
+/**
+ * 세션 번호. 첫 질문이 성공할 때 만든다(null 이면 아직 없음). 불러오기만 하고 끄면 아무것도 안 남는다.
+ */
+let sessionId: number | null = null;
+
+/**
+ * 최근 세션 목록을 찍고 돌려준다. 고를 때는 # 뒤의 세션 id 를 그대로 친다.
+ */
+/** TODO: 목록에 보여 줄 세션 개수 */
+function showSessions(): SessionRow[] {
+  const rows = history.listSessions(5);
+  for (let i = 0; i < rows.length; i++) {
+    const s = rows[i];
+    
+    
+
+    if (s) console.log(`#${s.id}  ${s.title}`);
+  }
+  if (rows.length === 0) console.log('저장된 세션 없음');
+  return rows;
+}
+
+/**
+ * 고른 세션의 메시지를 이력 배열에 붙인다. DB 는 안 건드린다. 옛 세션은 읽기만 한다.
+ * 저장은 첫 질문이 성공할 때 한 곳에서 한다. 그때 배열 전부(복사본 + 새 대화)가 새 세션으로 들어가 갈라 두기가 된다.
+ * 시작 메뉴에서 불러오기를 골랐을 때 쓴다.
+ */
+function forkSession(chosen: SessionRow): void {
+  const loaded = history.loadMessages(chosen.id);
+  // 기존 message 변수와 연결되는 곳 
+  messages.push(...loaded);
+  /**
+   * 경계 표시. 옛 것 뒤·새 것 앞에 두어 모델이 어디까지가 불러온 이력인지 알게 한다. system 이라 사용자 발언으로 안 보인다.
+   * DB 에는 안 넣는다(저장 때 system 을 거른다). 불러올 때마다 여기서 새로 넣는다.
+   */
+  messages.push({ role: 'system', content: '위 대화는 이전 세션에서 불러온 이력이다. 사용자가 "이전 세션" 이라고 하면 위 내용을 말한다.' });
+  console.log(`세션 #${chosen.id} 을 불러옴. 메시지 ${loaded.length}개. 첫 질문이 성공하면 새 세션으로 저장된다`);
+}
+
+/**
+ * 시작 메뉴. 먼저 "불러오기 / 새로" 를 고르고, 불러오기면 그때 목록을 찍고 번호를 묻는다.
+ * 세션 선택은 시작 때 한 번뿐이다. 대화 중 바꾸는 명령(/new·/load)은 없다.
+ * find 는 READ TABLE … WITH KEY id = 와 같다. 빈 줄·없는 번호면 못 찾아 chosen 이 없고 새 세션으로 간다.
+ */
+console.log('1) 이전 세션 불러오기');
+console.log('2) 새 세션');
+const menu = (await rl.question('선택 : ')).trim();
+if (menu === '1') {
+  const recent = showSessions();
+  const picked = (await rl.question('세션 번호 (빈 줄 = 새 세션) : ')).trim();
+  const chosen = recent.find((s) => s.id === Number(picked));
+  if (chosen) forkSession(chosen);
+  else console.log('새 세션으로 시작');
+}
 
 /**
  * 질문을 받아 답하고 다시 받는다. 끝내는 신호가 올 때까지 돈다.
@@ -242,7 +332,23 @@ while (true) {
    * 안 받으면 질문 하나 실패로 프로그램이 끝나고 앞 대화가 다 날아간다.
    */
   try {
-    console.log(await runAgent(messages));
+    const answer = await runAgent(messages);
+    console.log(answer);
+
+    /**
+     * 저장은 여기 한 곳. 실패는 catch 에서 배열을 되돌리니 DB 에 안 간다.
+     * 세션이 아직 없으면(첫 성공) 만들고 SYSTEM 을 뺀 배열 전부를 넣는다. 불러온 복사본이 있으면 같이 들어가 새 세션이 혼자 완전해진다.
+     * 이미 있으면 이번 질문에서 쌓인 것(before 이후)만 이어 넣는다.
+     * 첫 세션 생성 시에 
+     */
+    if (sessionId === null) {
+      sessionId = history.createSession();
+      /** system 은 저장 안 한다. 맨 위 SYSTEM 과 경계 표시는 코드가 매번 넣는다 */
+      history.appendMessages(sessionId, messages.slice(1).filter((m) => m.role !== 'system')); // slice(n) : n 자리부터 끝까지
+      history.setTitle(sessionId, await makeTitle(question, answer));
+    } else {
+      history.appendMessages(sessionId, messages.slice(before));
+    }
   } catch (e) {
     /**
      * ROLLBACK WORK. 실패한 질문에서 쌓인 것을 전부 잘라 낸다.
@@ -255,6 +361,7 @@ while (true) {
 }
 
 rl.close();
+history.close();
 
 /**
  * MCP 통로를 닫는다. 안 닫으면 서버 자식 프로세스가 남아 프로그램이 안 끝난다.

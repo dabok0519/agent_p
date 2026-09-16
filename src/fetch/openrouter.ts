@@ -18,7 +18,7 @@ if (!apiKey) {
 }
 
 const model = 'qwen/qwen3.8-27b';
-const only = ['reka/fp8']; // 'reka/fp8', 'akashml/fp8', 'CoreWeave/fp8'
+const only = ['reka/fp8']; // 'reka/fp8', 'akashml/fp8', 'coreweave/fp8'
 
 /**
  * 응답 모양 선언. TYPES: BEGIN OF … END OF 처럼 구조를 미리 적는다.

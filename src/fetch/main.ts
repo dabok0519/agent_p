@@ -54,7 +54,7 @@ async function runAgent(messages: Record<string, unknown>[]): Promise<string> {
   let answer: string | null = null;
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const res = await ask(messages);
+    const res =await ask(messages);
 
     /**
      * READ TABLE 뒤 sy-subrc 확인과 같다. 못 찾으면 값이 없는 상태가 온다.
@@ -70,7 +70,7 @@ async function runAgent(messages: Record<string, unknown>[]): Promise<string> {
     /**
      * 도구 호출 칸이 없으면 그게 끝났다는 신호다. 별도 종료 표시는 없다.
      */
-    if (!calls || calls.length === 0) {
+    if (!calls || calls.length === 0) {// finalreason이라는 확실한 정보가 있는데 왜 굳이 calls.length로 종료 사인을 줌 ? 
       /**
        * 답도 이력에 남긴다. 안 남기면 다음 질문 때 모델이 자기가 뭐라 답했는지 모른다.
        * "그 구매오더" 같은 되짚는 말을 못 푼다.
