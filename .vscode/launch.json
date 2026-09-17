@@ -13,7 +13,9 @@
       // 중단점 없이 첫 줄부터 F10 으로 훑고 싶으면 true 로.
       "stopOnEntry": false,
       "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
-      "smartStep": true
+      "smartStep": true,
+      // main.ts 가 띄우는 MCP 서버(자식 프로세스)에도 디버거를 붙인다. 없으면 match-graph.ts 중단점이 안 걸린다.
+      "autoAttachChildProcesses": true
     },
     {
       // 선언만 있는 파일을 열어 둔 채로도 도구 왕복을 돌리고 싶을 때 고른다.

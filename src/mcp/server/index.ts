@@ -19,6 +19,9 @@ import {
   detailsInputSchema,
   detailsDescription,
   runGetPurchaseOrderDetails,
+  matchInputSchema,
+  matchDescription,
+  runThreeWayMatch,
 } from './tools.js';
 
 /**
@@ -48,6 +51,18 @@ server.registerTool(
   { description: detailsDescription, inputSchema: detailsInputSchema },
   async (input) => {
     const result = await runGetPurchaseOrderDetails(input);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: !result.ok };
+  },
+);
+
+/**
+ * 3-way match. 안은 LangGraph(match-graph.ts) 지만 등록 모양은 위 둘과 같다. 바깥은 차이를 모른다.
+ */
+server.registerTool(
+  'threeWayMatch',
+  { description: matchDescription, inputSchema: matchInputSchema },
+  async (input) => {
+    const result = await runThreeWayMatch(input);
     return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: !result.ok };
   },
 );

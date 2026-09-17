@@ -2,7 +2,7 @@
  * SAP 호출만 따로 한 번 돌려보는 파일. 모델도 도구도 안 부른다.
  * 에이전트에 붙이기 전에 응답이 제대로 오는지 여기서 먼저 본다.
  */
-import { fetchPurchaseOrders, fetchPurchaseOrderDetails } from './sap.js';
+import { fetchPurchaseOrders, fetchPurchaseOrderDetails, fetchPurchaseOrderMatch } from './sap.js';
 
 /**
  * 결과가 돌아올 때까지 기다린다. await 를 빼면 값이 아니라
@@ -35,3 +35,9 @@ console.log('항목:', details.length, '건, 첫 줄:', JSON.stringify(details[0
  */
 const byQty = await fetchPurchaseOrderDetails({ minQuantity: 10 });
 console.log('수량≥10:', byQty.length, '건, 첫 줄:', JSON.stringify(byQty[0]));
+
+/**
+ * 3-way match. 브라우저 z_match?EBELN=4410000023 과 같은 한 줄, STATUS OK.
+ */
+const match = await fetchPurchaseOrderMatch({ poNumbers: ['4410000023'] });
+console.log('match:', match.length, '건, 첫 줄:', JSON.stringify(match[0]));

@@ -10,6 +10,11 @@ import { z } from 'zod';
 import { fetchPurchaseOrders, fetchPurchaseOrderDetails, type PurchaseOrderQuery, type PurchaseOrderDetailQuery } from './sap.js';
 
 /**
+ * 3-way match 그래프. 안이 LangGraph 인 건 이 import 하나로만 드러난다.
+ */
+import { runGraph } from './match-graph.js';
+
+/**
  * 헤더 조회 인자 스키마. z.string().optional() 한 단어가 옛 'vendor' in obj + typeof + 반환 네 줄과 같다.
  * z.enum 이 w !== 'USD' && w !== 'VND' 다. SDK 가 이 스키마로 검사한 뒤 통과값만 콜백에 넘긴다.
  */
@@ -51,10 +56,27 @@ type SearchInput = z.infer<typeof searchInputSchema>;
 type DetailsInput = z.infer<typeof detailsInputSchema>;
 
 /**
+ * 3-way match 인자 스키마. 넷 다 선택. poNumbers 가 있으면 업체·회사코드는 안 본다 (match-graph.ts 의 afterStart).
+ * 하나도 없으면 전체 오더 검산.
+ */
+export const matchInputSchema = z.object({
+  vendor: z.string().optional().describe('업체 코드 (예: BP2100). 이 업체 오더만 검산한다.'),
+  companyCode: z.string().optional().describe('회사코드 네 자리 (예: 1000).'),
+  poNumbers: z.array(z.string()).optional().describe('구매오더 번호 배열. 있으면 업체·회사코드는 안 본다. 44/45 로 시작하는 10자리 글자.'),
+  chunkSize: z.number().optional().describe('한 번에 검산할 오더 수. 보통 안 넣는다 (기본 50).'),
+});
+
+export const matchDescription =
+  '구매오더 항목마다 발주·입고·송장 수량과 단가를 맞춰 보는 3-way match. 상태별 건수(summary)와 불일치 줄(mismatches, 조치 action·이유 reason 포함)을 돌려준다. 조건 없이 부르면 전체 오더.';
+
+type MatchInput = z.infer<typeof matchInputSchema>;
+
+/**
  * index.ts 의 registerTool 콜백이 검사 통과값을 넘겨 부른다.
  * 도구 안에서는 throw 하면 안 된다. 멈추면 모델이 실패를 읽고 고칠 기회를 잃는다.
  */
-export async function runSearchPurchaseOrders(input: SearchInput) {
+export async function runSearchPurchaseOrders(input: SearchInput) { //인자의 타입 
+  // "input 은 { poNumber?, vendor?, companyCode?, currency? } 모양" 
   /**
    * 값이 있는 칸만 옮긴다. undefined 가 들어 있는 칸을 그대로 넘기면 타입이 안 맞는다(exactOptionalPropertyTypes).
    * type과 query 값 즉 , llm의 값과 맞는지 검사 
@@ -84,6 +106,22 @@ export async function runGetPurchaseOrderDetails(input: DetailsInput) {
   try {
     const orders = await fetchPurchaseOrderDetails(q);
     return { ok: true, count: orders.length, query: q, orders };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * 그래프 안에서는 SAP·OpenRouter 실패가 throw 로 올라온다. 여기서 한 번만 잡아 모델이 읽을 { ok:false, reason } 으로 바꾼다.
+ */
+export async function runThreeWayMatch(input: MatchInput) {
+  const q: { vendor?: string; companyCode?: string; poNumbers?: string[] } = {};
+  if (input.vendor !== undefined) q.vendor = input.vendor;
+  if (input.companyCode !== undefined) q.companyCode = input.companyCode;
+  if (input.poNumbers !== undefined) q.poNumbers = input.poNumbers;
+
+  try {
+    return await runGraph(q, input.chunkSize ?? 50);
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   }

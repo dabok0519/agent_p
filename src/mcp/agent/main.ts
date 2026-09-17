@@ -38,8 +38,9 @@ const SYSTEM = [
   /** TODO: 공급업체가 이름이 아니라 코드(BP2100)라는 것. 이름으로 물어오면 어떻게 하라고 할지 */
   '공급업체(Vendor) 코드는 BP로 시작하며 , BP나 숫자가 아닌 이름으로 공급업체를 물을 시 사용자에게 이름은 존재하지 않는다고 반환한다. ',
   '구매 오더 세부 항목은 구매 오더 헤더의 정보를 가지지 않는다. 구매 오더 헤더의 정보를 사용자가 물어볼 시 구매오더 조회 도구를 사용한다. ',
-  '도구는 둘이다. 헤더(poNumber·companyCode·vendor·orderDate·currency)는 searchPurchaseOrders, 품목(itemNumber·material·quantity)은 getPurchaseOrderDetails.',
+  '도구는 셋이다. 헤더(poNumber·companyCode·vendor·orderDate·currency)는 searchPurchaseOrders, 품목(itemNumber·material·quantity)은 getPurchaseOrderDetails, 발주·입고·송장 대조(3-way match, 검산, 불일치, 입고·송장 확인)는 threeWayMatch.',
   '구매 오더의 번호를 모르면 searchPurchaseOrders 로 번호를 얻는다. 번호를 알면 바로 getPurchaseOrderDetails.',
+  'threeWayMatch 는 업체·회사코드·번호 중 아는 것만 넣어 한 번에 부른다. 번호를 먼저 찾을 필요 없다. 결과의 summary(상태별 건수)와 mismatches(불일치 줄, action·reason)로 답한다. 오래 걸리니 한 번만 부른다.',
 ].join('\n');
 
 /**
@@ -98,7 +99,6 @@ async function runAgent(messages: Record<string, unknown>[]): Promise<string> {
     if (!choice) {
       throw new Error('응답에 답변 칸이 없다');
     }
-
     const calls = choice.message.tool_calls;
 
     /**
@@ -171,8 +171,9 @@ async function runAgent(messages: Record<string, unknown>[]): Promise<string> {
       /**
        * MCP 서버에 실행 요청. server/index.ts → tools.ts → sap.ts → SAP 을 거쳐 돌아올 때까지 기다린다.
        * await 을 빼면 결과가 아니라 "나중에 준다"는 표가 실려 아래에서 {} 로 찍힌다.
+       * 세 번째 인자는 제한시간. 기본 60초인데 threeWayMatch 는 실측 5분(LLM 공급자가 느림)이라 10분으로.
        */
-      const res = await client.callTool({ name: call.function.name, arguments: argsRecord });
+      const res = await client.callTool({ name: call.function.name, arguments: argsRecord }, undefined, { timeout: 600_000 });
 
       /**
        * 도구 실행 결과를 이력에 넣는다. 서버가 text 에 이미 글자로 싸 놓았으니 JSON.stringify 를 다시 안 한다.

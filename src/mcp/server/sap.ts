@@ -3,6 +3,12 @@
  */
 import 'dotenv/config';
 
+/**
+ * zod. SAP 응답 모양을 스키마로 적으면 검사·이름 변환·타입이 한 번에 나온다.
+ * 옛 손가드(in·typeof·Array.isArray) 판은 src/sap/client.ts 에 그대로 있다.
+ */
+import { z } from 'zod';
+
 const baseUrl = process.env.SAP_BASE_URL;
 const client = process.env.SAP_CLIENT;
 const user = process.env.SAP_USER;
@@ -23,39 +29,16 @@ if (!baseUrl || !client || !user || !password) {
 const sapClient: string = client;
 
 /**
- * 도구에게 넘길 모양. SAP 의 대문자 칸을 도구 쪽 이름으로 바꾼 것이다.
- * 이 변환을 여기서 끝내야 도구 쪽이 ABAP 필드 이름을 몰라도 된다.
- */
-export type PurchaseOrder = {
-  poNumber: string;
-  companyCode: string;
-  vendor: string;
-  orderDate: string;
-  currency: string;
-};
-
-/**
- * tools.ts 가 검사 통과값을 fetchPurchaseOrders 에 넘길 때의 조건 모양.
- * 칸 이름은 도구 쪽 이름이다. ABAP 이름(EBELN)은 fetch 안에서만 나온다.
- */
-export type PurchaseOrderQuery = {
-  poNumber?: string;
-  vendor?: string;
-  companyCode?: string;
-  currency?: string;
-};
-
-/**
  * 사용자·비번을 Basic 인증 한 줄로 만든다. 에러·로그에는 절대 싣지 않는다.
  * Buffer를 통해 바이트 화 -> toString('base64')를 통해 바이트를 영문자 및 숫자화
  */
 const authorization = `Basic ${Buffer.from(`${user}:${password}`).toString('base64')}`;
 
 /**
- * SICF 노드 하나를 부르는 공통 부분. 경로와 조건만 다르고 인증·제한시간·가드는 전부 같다.
- * 배열까지만 확인해 돌려준다. 줄 안의 칸은 부르는 쪽 toXxx 가 본다.
+ * SICF 노드 하나를 부르는 공통 부분. 경로·조건·응답 스키마만 다르고 인증·제한시간·가드는 전부 같다.
+ * schema 가 배열인지·줄마다 칸이 맞는지를 한 번에 본다. 통과한 값은 이미 도구 쪽 이름이다.
  */
-async function callSap(path: string, params: Record<string, string>): Promise<unknown[]> {
+async function callSap<T>(path: string, params: Record<string, string>, schema: z.ZodType<T>): Promise<T> {
   /** 제한시간 밀리초. 응답이 영영 안 올 수 있어 끊는다 */
   const timeoutMs = 12000;
 
@@ -83,21 +66,52 @@ async function callSap(path: string, params: Record<string, string>): Promise<un
   }
 
   /**
-   * 글자 → 객체 변환. 결과는 타입이 없어 부르는 쪽에서 손으로 확인한다.
+   * 글자 → 객체 변환. 결과는 타입이 없어 바로 아래 스키마가 본다.
    */
-  const json = await res.json();
+  const json: unknown = await res.json();
 
   /**
-   * 배열 가드. 한 건만 있을 때 객체 하나로 돌려주는 서비스도 있다.
-   * 안 막으면 부르는 쪽 LOOP 가 엉뚱한 값을 돌다 멈춘다.
-   * 현재 ISCF 쪽에서 최상위를 배열로 반환하기 때문에 배열로 왔는지 검사한다.
+   * 스키마 검사. 실패하면 zod 가 던지는데 문구가 기계용이라, 경로와 함께 사람이 읽는 문구로 바꿔 다시 던진다.
+   * 우리 ABAP 이 준 값이라 모양이 틀리면 코드가 어긋난 것이다. 멈춰서 어느 줄 어느 칸인지 알린다.
    */
-  if (!Array.isArray(json)) {
-    throw new Error(`SAP 응답이 배열이 아니다: ${JSON.stringify(json)}`);
+  const parsed = schema.safeParse(json);
+  if (!parsed.success) {
+    throw new Error(`SAP 응답 모양이 다르다 ${path}: ${z.prettifyError(parsed.error)}`);
   }
-
-  return json;
+  return parsed.data;
 }
+
+/**
+ * z_po 한 줄 = ABAP SELECT ebeln, bukrs, lifnr, aedat, waers FROM ekko. ABAP 칸을 바꾸면 여기만 고친다.
+ * z.object 가 옛 in + typeof 가드 다섯이고, transform 이 옛 return { poNumber: row.EBELN, … } 이다.
+ * 대문자→도구 이름 변환을 여기서 끝내야 도구 쪽이 ABAP 필드 이름을 몰라도 된다.
+ */
+const sapPurchaseOrder = z
+  .object({ EBELN: z.string(), BUKRS: z.string(), LIFNR: z.string(), AEDAT: z.string(), WAERS: z.string() })
+  .transform((r) => ({
+    poNumber: r.EBELN,
+    companyCode: r.BUKRS,
+    vendor: r.LIFNR,
+    /** AEDAT 는 날짜형이라 /ui2/cl_json 이 '2025-06-12' 로 바꿔서 보낸다. 여기선 그대로 쓴다. */
+    orderDate: r.AEDAT,
+    currency: r.WAERS,
+  }));
+
+/**
+ * 스키마에서 타입을 뽑는다. transform 뒤 모양이라 소문자 이름이다. TYPES 를 따로 안 쓴다.
+ */
+export type PurchaseOrder = z.infer<typeof sapPurchaseOrder>;
+
+/**
+ * tools.ts 가 검사 통과값을 fetchPurchaseOrders 에 넘길 때의 조건 모양.
+ * 칸 이름은 도구 쪽 이름이다. ABAP 이름(EBELN)은 fetch 안에서만 나온다.
+ */
+export type PurchaseOrderQuery = {
+  poNumber?: string;
+  vendor?: string;
+  companyCode?: string;
+  currency?: string;
+};
 
 /**
  * 구매오더를 SAP 에서 조회한다. 조건은 전부 SAP 이 거르고, 여기는 이름만 바꿔 전달한다.
@@ -111,81 +125,32 @@ export async function fetchPurchaseOrders(q: PurchaseOrderQuery): Promise<Purcha
    * 값이 있는 조건만 담는다. 안 온 값을 넣으면 글자 "undefined" 가 전송되어 0건이 된다.
    * ABAP 은 빈 파라미터를 무시하니, 없는 값을 안 보내는 건 TS 몫이다.
    */
-  // ABAP이 읽을 수 있게 변환
   const params: Record<string, string> = {};
   if (q.poNumber) params.EBELN = q.poNumber;
   if (q.vendor) params.LIFNR = q.vendor;
   if (q.companyCode) params.BUKRS = q.companyCode;
   if (q.currency) params.WAERS = q.currency;
 
-  const json = await callSap('/sap/bc/z_demo/z_po', params);
-
-  const rows: PurchaseOrder[] = [];
-
-  /**
-   * 값을 하나씩 확인해 새 배열에 옮겨 담는다. 몇 번째 줄인지 같이 넘겨 어긋난 자리를 남긴다.
-   */
-  for (let i = 0; i < json.length; i++) {
-    const one = json[i];
-
-    if (typeof one !== 'object' || one === null) {
-      throw new Error(`줄 ${i}: 객체가 아니다 ${JSON.stringify(one)}`);
-    }
-
-    rows.push(toPurchaseOrder(one, `줄 ${i}`));
-  }
-
-  return rows;
+  return callSap('/sap/bc/z_demo/z_po', params, z.array(sapPurchaseOrder));
 }
 
 /**
- * /sap/bc/z_demo/z_po 한 줄 = ABAP SELECT ebeln, bukrs, lifnr, aedat, waers FROM ekko. ABAP 칸을 바꾸면 여기와 PurchaseOrder 를 같이 고친다.
- * ABAP 칸 이름을 도구가 쓰는 이름으로 바꾼다. 칸이 있는지(해당 값들은 모두 필수로 반환받아야 하기 때문임)·글자인지만 본다.
- * 우리 ABAP 이 준 값이라 모양이 틀리면 코드가 어긋난 것이다. 멈춰서 어느 칸인지 알린다.
+ * ITEMS 한 줄 = { EBELP, MATNR, MENGE }. EBELP·MENGE 는 ABAP 숫자형이라 숫자로 온다 (브라우저 확인: 10, 2.000).
  */
-function toPurchaseOrder(row: object, where: string): PurchaseOrder {
-  if (!('EBELN' in row) || typeof row.EBELN !== 'string') {
-    throw new Error(`${where}: EBELN 칸이 없거나 글자가 아니다 ${JSON.stringify(row)}`);
-  }
-  if (!('BUKRS' in row) || typeof row.BUKRS !== 'string') {
-    throw new Error(`${where}: BUKRS 칸이 없거나 글자가 아니다 ${JSON.stringify(row)}`);
-  }
-  if (!('LIFNR' in row) || typeof row.LIFNR !== 'string') {
-    throw new Error(`${where}: LIFNR 칸이 없거나 글자가 아니다 ${JSON.stringify(row)}`);
-  }
-  if (!('AEDAT' in row) || typeof row.AEDAT !== 'string') {
-    throw new Error(`${where}: AEDAT 칸이 없거나 글자가 아니다 ${JSON.stringify(row)}`);
-  }
-  if (!('WAERS' in row) || typeof row.WAERS !== 'string') {
-    throw new Error(`${where}: WAERS 칸이 없거나 글자가 아니다 ${JSON.stringify(row)}`);
-  }
-
-  return {
-    poNumber: row.EBELN,
-    companyCode: row.BUKRS,
-    vendor: row.LIFNR,
-    /** AEDAT 는 날짜형이라 /ui2/cl_json 이 '2025-06-12' 로 바꿔서 보낸다. 여기선 그대로 쓴다. */
-    orderDate: row.AEDAT,
-    currency: row.WAERS,
-  };
-}
+const sapItem = z
+  .object({ EBELP: z.number(), MATNR: z.string(), MENGE: z.number() })
+  .transform((r) => ({ itemNumber: r.EBELP, material: r.MATNR, quantity: r.MENGE }));
 
 /**
- * 도구에게 넘길 항목 모양. ABAP 의 ty_item.
+ * z_po_item 한 줄 = { EBELN, ITEMS[] }. ABAP 이 ekpo 를 거르고 ekko 번호 밑에 LOOP 로 담은 것.
+ * z.array(sapItem) 이 옛 "ITEMS 배열 가드 + 항목 LOOP 안 toItem" 이다. 몇 번째 항목이 틀렸는지는 zod 가 경로로 알린다.
  */
-export type PurchaseOrderItem = {
-  itemNumber: number;
-  material: string;
-  quantity: number;
-};
+const sapDetail = z
+  .object({ EBELN: z.string(), ITEMS: z.array(sapItem) })
+  .transform((r) => ({ poNumber: r.EBELN, items: r.ITEMS }));
 
-/**
- * 도구에게 넘길 상세 모양. ABAP 의 ty_po. 번호 하나에 items 배열. 헤더 다른 칸은 z_po 가 이미 주므로 안 싣는다.
- */
-export type PurchaseOrderDetail = {
-  poNumber: string;
-  items: PurchaseOrderItem[];
-};
+export type PurchaseOrderItem = z.infer<typeof sapItem>;
+export type PurchaseOrderDetail = z.infer<typeof sapDetail>;
 
 /**
  * tools.ts 가 fetchPurchaseOrderDetails 에 넘기는 조건 모양. 셋 다 선택이다.
@@ -214,70 +179,56 @@ export async function fetchPurchaseOrderDetails(q: PurchaseOrderDetailQuery): Pr
   /** 숫자 0 도 값이라 !== undefined 로 본다. if (q.minQuantity) 면 0 이 빠진다 */
   if (q.minQuantity !== undefined) params.MENGE = String(q.minQuantity);
 
-  const json = await callSap('/sap/bc/z_demo/z_po_item', params);
-
-  const rows: PurchaseOrderDetail[] = [];
-
-  for (let i = 0; i < json.length; i++) {
-    const one = json[i];
-
-    if (typeof one !== 'object' || one === null) {
-      throw new Error(`줄 ${i}: 객체가 아니다 ${JSON.stringify(one)}`);
-    }
-
-    rows.push(toPurchaseOrderDetail(one, `줄 ${i}`));
-  }
-
-  return rows;
+  return callSap('/sap/bc/z_demo/z_po_item', params, z.array(sapDetail));
 }
 
 /**
- * /sap/bc/z_demo/z_po_item 한 줄 = { EBELN, ITEMS[] }. ABAP 이 ekpo 를 EBELN·MATNR·MENGE 로 거르고 ekko 번호 밑에 LOOP 로 담은 것.
- * 번호 칸 하나와 ITEMS 배열을 본다.
- * 항목마다 몇 번째인지 where 에 이어 붙여 어긋난 자리가 "줄 3 항목 0" 처럼 나오게 한다.
+ * z_match 의 판정 여섯. ABAP IF 순서와 같다. z.enum 하나가 옛 "배열 + find + undefined 가드" 다.
+ * 여기 없는 글자가 오면 ABAP 이 바뀐 것이라 멈춘다.
  */
-function toPurchaseOrderDetail(row: object, where: string): PurchaseOrderDetail {
-  if (!('EBELN' in row) || typeof row.EBELN !== 'string') {
-    throw new Error(`${where}: EBELN 칸이 없거나 글자가 아니다 ${JSON.stringify(row)}`);
-  }
-
-  if (!('ITEMS' in row) || !Array.isArray(row.ITEMS)) {
-    throw new Error(`${where}: ITEMS 칸이 없거나 배열이 아니다 ${JSON.stringify(row)}`);
-  }
-
-  const items: PurchaseOrderItem[] = [];
-
-  for (let j = 0; j < row.ITEMS.length; j++) {
-    const one: unknown = row.ITEMS[j];
-
-    if (typeof one !== 'object' || one === null) {
-      throw new Error(`${where} 항목 ${j}: 객체가 아니다 ${JSON.stringify(one)}`);
-    }
-
-    items.push(toItem(one, `${where} 항목 ${j}`));
-  }
-
-  return { poNumber: row.EBELN, items };
-}
+const matchStatus = z.enum(['OK', 'GR_PENDING', 'GR_OVER', 'IR_OVER', 'IR_UNDER', 'PRICE_DIFF']);
+export type MatchStatus = z.infer<typeof matchStatus>;
 
 /**
- * ITEMS 한 줄 = { EBELP, MATNR, MENGE }. EBELP·MENGE 는 ABAP 숫자형이라 숫자로 온다 (브라우저 확인: 10, 2.000).
- * 세부 항목 한 줄을 도구 이름으로 바꾼다.
+ * z_match 한 줄 = { EBELN, EBELP, MATNR, PO_QTY, GR_QTY, IR_QTY, PO_AMT, IR_AMT, STATUS }. ABAP ty_result.
+ * 수량 셋·금액 둘은 ABAP 이 이미 합쳐서 준 값이다 (브라우저 확인: 10.000, 128.60 → 숫자).
  */
-function toItem(row: object, where: string): PurchaseOrderItem {
-  if (!('EBELP' in row) || typeof row.EBELP !== 'number') {
-    throw new Error(`${where}: EBELP 칸이 없거나 숫자가 아니다 ${JSON.stringify(row)}`);
-  }
-  if (!('MATNR' in row) || typeof row.MATNR !== 'string') {
-    throw new Error(`${where}: MATNR 칸이 없거나 글자가 아니다 ${JSON.stringify(row)}`);
-  }
-  if (!('MENGE' in row) || typeof row.MENGE !== 'number') {
-    throw new Error(`${where}: MENGE 칸이 없거나 숫자가 아니다 ${JSON.stringify(row)}`);
-  }
+const sapMatch = z
+  .object({
+    EBELN: z.string(),
+    EBELP: z.number(),
+    MATNR: z.string(),
+    PO_QTY: z.number(),
+    GR_QTY: z.number(),
+    IR_QTY: z.number(),
+    PO_AMT: z.number(),
+    IR_AMT: z.number(),
+    STATUS: matchStatus,
+  })
+  .transform((r) => ({
+    poNumber: r.EBELN,
+    itemNumber: r.EBELP,
+    material: r.MATNR,
+    poQty: r.PO_QTY,
+    grQty: r.GR_QTY,
+    irQty: r.IR_QTY,
+    poAmt: r.PO_AMT,
+    irAmt: r.IR_AMT,
+    status: r.STATUS,
+  }));
 
-  return {
-    itemNumber: row.EBELP,
-    material: row.MATNR,
-    quantity: row.MENGE,
-  };
+export type PurchaseOrderMatch = z.infer<typeof sapMatch>;
+
+/**
+ * 3-way match 결과를 SAP 에서 받는다. 검산은 전부 ABAP 이 하고 여기는 이름만 바꾼다.
+ * 번호가 없으면 EBELN 을 안 보내 ABAP 이 전체를 돌려준다 (z_po_item 과 같은 규칙).
+ */
+/**
+ * match-graph.ts 의 fetchChunk 노드가 부른다. sap-check.ts 는 직접 부른다.
+ */
+export async function fetchPurchaseOrderMatch(q: { poNumbers?: string[] }): Promise<PurchaseOrderMatch[]> {
+  const params: Record<string, string> = {};
+  if (q.poNumbers && q.poNumbers.length > 0) params.EBELN = q.poNumbers.join(',');
+
+  return callSap('/sap/bc/z_demo/z_match', params, z.array(sapMatch));
 }

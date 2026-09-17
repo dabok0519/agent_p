@@ -35,14 +35,14 @@ const client = new Client({ name: 'mcp-check', version: '0.1.0' });
 await client.connect(transport);
 
 /**
- * ① 목록. 이름 둘이 그 순서로 오는가.
+ * ① 목록. 이름 셋이 등록 순서로 오는가.
  */
-// 도구 목록 요청 
+// 도구 목록 요청
 const list = await client.listTools();
 
 assert.deepEqual(
   list.tools.map((t) => t.name),
-  ['searchPurchaseOrders', 'getPurchaseOrderDetails'],
+  ['searchPurchaseOrders', 'getPurchaseOrderDetails', 'threeWayMatch'],
 );
 console.log('목록:', list.tools.map((t) => t.name).join(', '));
 
