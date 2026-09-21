@@ -32,8 +32,8 @@ export const searchInputSchema = z.object({
   currency: z.enum(['USD', 'VND']).optional().describe('통화 단위로 필터링'),
 });
 
-/** TODO: 이 도구가 뭘 하는지 한 문장. 인자 넷을 반영한다 (src/fetch/tools.ts 참고) */
-export const searchDescription = '구매 오더 목록을 조회한다.';
+export const searchDescription =
+  '구매오더 헤더 목록을 조회한다. 줄마다 poNumber·companyCode·vendor·orderDate·currency. 조건 넷(poNumber·vendor·companyCode·currency)은 필요한 것만 넣는다. 둘 이상 넣으면 전부 만족하는 줄만 온다(OR 없음). 하나도 안 넣으면 전체.';
 
 /**
  * 항목 조회 인자 스키마. z.array(z.string()) 이 옛 Array.isArray + LOOP 안 typeof 다.
@@ -46,7 +46,7 @@ export const detailsInputSchema = z.object({
 });
 
 export const detailsDescription =
-  '구매오더의 품목(항목) 목록을 조회한다. 오더 번호별로 items 배열이 온다. poNumbers·material·minQuantity 는 전부 선택이고 AND 로 겹친다. 하나도 안 넣으면 전체 오더의 항목이 온다.';
+  '구매오더의 품목(항목) 목록을 조회한다. 오더 번호별로 items 배열(itemNumber·material·quantity)이 온다. 업체·회사코드·통화·날짜는 안 온다(헤더는 searchPurchaseOrders). 조건 셋(poNumbers·material·minQuantity)은 필요한 것만 넣는다. 둘 이상 넣으면 전부 만족하는 항목만 온다. 하나도 안 넣으면 전체 오더의 항목이 온다.';
 
 /**
  * 스키마에서 type of를 통해 타입을 뽑는다. TYPES 선언을 따로 안 쓰고 스키마 하나가 검사와 타입을 다 한다.

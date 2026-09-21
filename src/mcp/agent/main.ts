@@ -25,23 +25,32 @@ import { createInterface } from 'node:readline/promises';
 import { openHistory, type SessionRow } from './history.js';
 
 /**
- * 모델에게 미리 주는 지시. 질문보다 앞에 둬야 그 뒤 전부에 적용된다.
- * 여러 줄을 줄바꿈으로 이어 한 덩어리 글자로 만든다.
+ * 스킬 로드 3단계 + 로컬 도구 셋. skills = 시작 때 스캔한 목록, localTools = 도구 정의, runLocalTool = 실행.
  */
-const SYSTEM = [
-  '너는 SAP 구매 오더 조회 도우미다. 도구로 데이터를 조회하고, 그 결과만으로 한국어로 정리해서 답한다.',
-  '답에 쓰는 값은 도구가 반환한 결과에서 가져온다. 기억이나 추측으로 채우지 마라.',
-  '조회하지 않은 대상을 "없다"고 단정하지 마라. 확인이 필요하면 도구를 먼저 불러라.',
-  '필요한 데이터를 다 모으기 전에 결론을 내지 마라. 부분 조회 상태로 답하지 마라.',
-  '도구의 정보를 보고 사용자의 응답에 답하기 힘든 경우 사용자에게 다시 정확한 값을 되묻는다.',
-  '구매오더 번호는 44 또는 45로 시작하는 10자리다(4410000000, 4420000008). 번호는 반드시 글자로 넣는다.',
-  /** TODO: 공급업체가 이름이 아니라 코드(BP2100)라는 것. 이름으로 물어오면 어떻게 하라고 할지 */
-  '공급업체(Vendor) 코드는 BP로 시작하며 , BP나 숫자가 아닌 이름으로 공급업체를 물을 시 사용자에게 이름은 존재하지 않는다고 반환한다. ',
-  '구매 오더 세부 항목은 구매 오더 헤더의 정보를 가지지 않는다. 구매 오더 헤더의 정보를 사용자가 물어볼 시 구매오더 조회 도구를 사용한다. ',
-  '도구는 셋이다. 헤더(poNumber·companyCode·vendor·orderDate·currency)는 searchPurchaseOrders, 품목(itemNumber·material·quantity)은 getPurchaseOrderDetails, 발주·입고·송장 대조(3-way match, 검산, 불일치, 입고·송장 확인)는 threeWayMatch.',
-  '구매 오더의 번호를 모르면 searchPurchaseOrders 로 번호를 얻는다. 번호를 알면 바로 getPurchaseOrderDetails.',
-  'threeWayMatch 는 업체·회사코드·번호 중 아는 것만 넣어 한 번에 부른다. 번호를 먼저 찾을 필요 없다. 결과의 summary(상태별 건수)와 mismatches(불일치 줄, action·reason)로 답한다. 오래 걸리니 한 번만 부른다.',
-].join('\n');
+import { skills, localTools, runLocalTool } from './skills.js';
+
+/**
+ * 모델에게 미리 주는 지시. 질문보다 앞에 둬야 그 뒤 전부에 적용된다.
+ * 역할 5줄만 남긴다. 구매오더 절차(번호 형식·업체 코드·도구 선택·3-way 호출법)는 src/mcp/agent/skills/po-query/SKILL.md 로 옮겼다.
+ */
+/**
+   * 스킬 로드 ② 목록. 이름·설명만 붙인다. 본문은 모델이 readSkill 을 요청하면 그때 코드가 읽어 준다.
+   * 스킬이 없으면 이 부분이 빈 배열이라 SYSTEM 은 역할 5줄뿐이다.
+   * skills.ts에서 끌고 오기 
+   */
+const skillList =
+  skills.length > 0
+    ? `${skills.map((s) => `- ${s.name}: ${s.description}`).join('\n')}`
+    : '';
+
+const SYSTEM = `너는 SAP 조회 도우미다. 도구로 데이터를 조회하고, 그 결과만으로 한국어로 정리해서 답한다.
+답에 쓰는 값은 도구가 반환한 결과에서 가져온다. 기억이나 추측으로 채우지 마라.
+조회하지 않은 대상을 "없다"고 단정하지 마라. 확인이 필요하면 도구를 먼저 불러라.
+필요한 데이터를 다 모으기 전에 결론을 내지 마라. 부분 조회 상태로 답하지 마라.
+도구의 정보를 보고 사용자의 응답에 답하기 힘든 경우 사용자에게 다시 정확한 값을 되묻는다.
+질문에 맞는 스킬이 있으면 readSkill 로 본문을 먼저 읽고 그 절차를 따른다. 스킬 목록:${skillList}`;
+
+
 
 /**
  * MCP 서버 연결. 프로그램 시작 때 한 번. 서버가 자식 프로세스로 뜨고 초기화 인사가 끝날 때까지 기다린다.
@@ -52,6 +61,12 @@ await client.connect(
   new StdioClientTransport({
     command: process.execPath,
     args: ['--import', 'tsx', 'src/mcp/server/index.ts'],
+    /**
+    * 부모 환경변수 전부 물려준다. SDK 기본은 PATH 등 12개만 넘겨서, VS Code 가 자식에 디버거를 붙이려고 심는 변수가 잘린다.
+    * 없으면 서버(index.ts 밑) 중단점이 안 걸린다. 서버는 .env 를 직접 읽으니 동작엔 영향 없다.
+    */
+
+    env: process.env as Record<string, string>,
   }),
 );
 
@@ -63,10 +78,17 @@ await client.connect(
 const list = await client.listTools();
 
 
-const tools: OpenAiTool[] = list.tools.map((t) => ({
+const mcpTools: OpenAiTool[] = list.tools.map((t) => ({
   type: 'function',
   function: { name: t.name, description: t.description ?? '', parameters: t.inputSchema },
 }));
+
+/**
+ * 모델에게 보내는 도구 목록. 
+ * MCP 셋 + 로컬. 모델은 어느 쪽인지 모르고 이름으로만 요청한다. 가르는 건 runLocalTool.
+ * ...은 이어붙힌다라고 생각 <> 객체일 경우 똑같지만 같은 값이 있을 경우 후자 값이 덮어씌워진다.
+ */
+const tools: OpenAiTool[] = [...mcpTools, ...localTools];
 
 /**
  * 대화 이력. 왕복할 때마다 여기에 쌓아서 통째로 다시 보낸다.
@@ -169,20 +191,38 @@ async function runAgent(messages: Record<string, unknown>[]): Promise<string> {
       const argsRecord: Record<string, unknown> = { ...args };
 
       /**
+       * 갈림. 로컬 도구(readSkill 등)면 이 프로세스에서 끝나고 결과 글자가 온다. null 이면 MCP 서버로.
+       * 스킬 로드 ③ 본문이 실제로 읽히는 자리가 여기다.
+       */
+      const local = runLocalTool(call.function.name, argsRecord);
+
+      /**
        * MCP 서버에 실행 요청. server/index.ts → tools.ts → sap.ts → SAP 을 거쳐 돌아올 때까지 기다린다.
        * await 을 빼면 결과가 아니라 "나중에 준다"는 표가 실려 아래에서 {} 로 찍힌다.
        * 세 번째 인자는 제한시간. 기본 60초인데 threeWayMatch 는 실측 5분(LLM 공급자가 느림)이라 10분으로.
+       * 서버가 text 에 이미 글자로 싸 놓았으니 textOf 로 꺼내기만 한다.
        */
-      const res = await client.callTool({ name: call.function.name, arguments: argsRecord }, undefined, { timeout: 600_000 });
+      let content: string;
+      if (local !== null) {
+        content = local;
+      } else {
+        /** 두 번째 인자(결과 스키마)는 안 쓴다. 세 번째(제한시간)를 넣으려면 그 자리를 undefined 로 채워야 한다 */
+        const res = await client.callTool(
+          { name: call.function.name, arguments: argsRecord },
+          undefined,
+          { timeout: 600_000 },
+        );
+        // mcp는 서버기 때문에 값을 텍스트로 묶어서 줌 
+        content = textOf(res);
+      }
 
       /**
-       * 도구 실행 결과를 이력에 넣는다. 서버가 text 에 이미 글자로 싸 놓았으니 JSON.stringify 를 다시 안 한다.
-       * MCP 서버 반환 파라메타 확인해보기 
+       * 도구 실행 결과를 이력에 넣는다. 로컬이든 MCP 든 같은 모양(role tool + 글자)이라 뒤 코드는 구분 안 한다.
        */
       messages.push({
         role: 'tool',
         tool_call_id: call.id,
-        content: textOf(res),
+        content,
       });
     }
   }
@@ -225,12 +265,15 @@ async function makeTitle(question: string, answer: string): Promise<string> {
   try {
     const res = await ask([
       { role: 'system', content: ' 대화의 제목을 한국어 명사구 15자 이내로, 따옴표·마침표 없이 한 줄만 답한다.' },
-      /** 답은 앞 500자만. 제목엔 그만큼이면 충분하고 토큰을 아낀다 */
+      /** 답은 앞 500자만. 제목엔 그만큼이면 충분하고 토큰을 아낀다 
+       * 사용자의 질문 + runagent의 결과 제공 
+      */
       { role: 'user', content: `질문: ${question}\n답: ${answer.slice(0, 500)}` },
     ]);
     /** 모델이 따옴표나 줄바꿈을 섞어도 한 줄로 만든다. 30자 넘으면 자른다 */
     const raw = res.choices[0]?.message.content ?? '';
     const title = raw.replace(/["'\n]/g, '').trim().slice(0, 30);
+    //ask 결과 제목을 생성해주지 않은 경우 question으로 지정 
     return title || question;
   } catch {
     return question;
@@ -252,7 +295,7 @@ const rl = createInterface({ input: process.stdin, output: process.stdout });
 const history = openHistory('agent-history.db');
 
 /**
- * 세션 번호. 첫 질문이 성공할 때 만든다(null 이면 아직 없음). 불러오기만 하고 끄면 아무것도 안 남는다.
+ * 세션 번호. 새 세션이면 첫 질문이 성공할 때 만든다(null 이면 아직 없음). 불러온 세션이면 그 번호를 그대로 쓴다.
  */
 let sessionId: number | null = null;
 
@@ -274,11 +317,13 @@ function showSessions(): SessionRow[] {
 }
 
 /**
- * 고른 세션의 메시지를 이력 배열에 붙인다. DB 는 안 건드린다. 옛 세션은 읽기만 한다.
- * 저장은 첫 질문이 성공할 때 한 곳에서 한다. 그때 배열 전부(복사본 + 새 대화)가 새 세션으로 들어가 갈라 두기가 된다.
+ * 고른 세션의 메시지를 이력 배열에 붙이고, 그 세션에 이어 쓴다 (sessionId 를 그 번호로).
+ * 이후 질문은 저장 자리의 else 갈래로 가서 이 세션 뒤에 붙는다. 새 세션은 안 생긴다.
+ * (갈라 두기 판은 뺐다. 사용자 결정 2026-09-19: 불러오기 = 이어 쓰기)
  * 시작 메뉴에서 불러오기를 골랐을 때 쓴다.
  */
-function forkSession(chosen: SessionRow): void {
+function loadSession(chosen: SessionRow): void {
+  sessionId = chosen.id;
   const loaded = history.loadMessages(chosen.id);
   // 기존 message 변수와 연결되는 곳 
   messages.push(...loaded);
@@ -287,7 +332,7 @@ function forkSession(chosen: SessionRow): void {
    * DB 에는 안 넣는다(저장 때 system 을 거른다). 불러올 때마다 여기서 새로 넣는다.
    */
   messages.push({ role: 'system', content: '위 대화는 이전 세션에서 불러온 이력이다. 사용자가 "이전 세션" 이라고 하면 위 내용을 말한다.' });
-  console.log(`세션 #${chosen.id} 을 불러옴. 메시지 ${loaded.length}개. 첫 질문이 성공하면 새 세션으로 저장된다`);
+  console.log(`세션 #${chosen.id} 을 불러옴. 메시지 ${loaded.length}개. 이 세션에 이어서 저장된다`);
 }
 
 /**
@@ -302,7 +347,7 @@ if (menu === '1') {
   const recent = showSessions();
   const picked = (await rl.question('세션 번호 (빈 줄 = 새 세션) : ')).trim();
   const chosen = recent.find((s) => s.id === Number(picked));
-  if (chosen) forkSession(chosen);
+  if (chosen) loadSession(chosen);
   else console.log('새 세션으로 시작');
 }
 
@@ -338,16 +383,16 @@ while (true) {
 
     /**
      * 저장은 여기 한 곳. 실패는 catch 에서 배열을 되돌리니 DB 에 안 간다.
-     * 세션이 아직 없으면(첫 성공) 만들고 SYSTEM 을 뺀 배열 전부를 넣는다. 불러온 복사본이 있으면 같이 들어가 새 세션이 혼자 완전해진다.
-     * 이미 있으면 이번 질문에서 쌓인 것(before 이후)만 이어 넣는다.
-     * 첫 세션 생성 시에 
+     * 새 세션의 첫 성공이면 세션을 만들고 SYSTEM 을 뺀 배열 전부를 넣고 제목을 짓는다.
+     * 불러온 세션이거나 두 번째 질문부터는 이번 질문에서 쌓인 것(before 이후)만 이어 넣는다.
      */
     if (sessionId === null) {
       sessionId = history.createSession();
       /** system 은 저장 안 한다. 맨 위 SYSTEM 과 경계 표시는 코드가 매번 넣는다 */
       history.appendMessages(sessionId, messages.slice(1).filter((m) => m.role !== 'system')); // slice(n) : n 자리부터 끝까지
       history.setTitle(sessionId, await makeTitle(question, answer));
-    } else {
+    } 
+    else {
       history.appendMessages(sessionId, messages.slice(before));
     }
   } catch (e) {

@@ -54,7 +54,7 @@ export type OpenAiTool = {
  * main.ts 가 왕복할 때마다 이 이름을 부른다. 이력과 도구 목록은 밖에서 받는다.
  * tools 를 안 넘기면 도구 없는 일반 질문이다(제목 짓기가 쓴다). undefined 는 JSON.stringify 가 칸째 뺀다.
  */
-export async function ask(messages: Record<string, unknown>[], tools?: OpenAiTool[]): Promise<ChatCompletion> {
+export async function ask(messages: Record<string, unknown>[], tools?: OpenAiTool[], responseFormat?: Record<string, unknown>): Promise<ChatCompletion> {
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -65,6 +65,7 @@ export async function ask(messages: Record<string, unknown>[], tools?: OpenAiToo
       model,
       messages,
       tools,
+      response_format: responseFormat,
       provider: { only, require_parameters: true, allow_fallbacks: true },
     }),
   });

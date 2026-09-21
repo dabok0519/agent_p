@@ -74,7 +74,7 @@ export function openHistory(path: string) {
     },
 
     /**
-     * 첫 질문을 제목으로. 목록에서 알아보려고.
+     * 세션 제목. main.ts 의 makeTitle 이 모델에게 한 줄 요청해 받은 글자를 넘긴다. 모델 호출이 실패하면 첫 질문 글자. 목록에서 알아보려고.
      */
     setTitle(sessionId: number, title: string): void {
       updateTitle.run(title, sessionId);

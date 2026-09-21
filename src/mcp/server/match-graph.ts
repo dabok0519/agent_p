@@ -1,6 +1,6 @@
 /**
  * 3-way match 도구의 안. LangGraph 로 짠다. 바깥(main.ts)은 이 파일을 도구 하나로만 본다.
- * 검산은 ABAP(z_match)이 끝냈다. 여기는 PO 번호를 모아 묶음으로 묻고, 불일치 줄만 LLM 에게 조치를 묻는다.
+ * 검산은 ABAP(z_match)이 끝냈다. 여기는 PO 번호를 모아 묶음으로 묻고, 불일치 줄만 모델에게 보내 조치 글자를 받아 검사한다.
  */
 import 'dotenv/config';
 
@@ -20,10 +20,10 @@ import { ask } from '../agent/openrouter.js';
 /**
  * SAP 호출 둘. 헤더(번호 모으기)와 검산 결과. 상대 경로는 .js 확장자가 필요하다.
  */
-import { fetchPurchaseOrders, fetchPurchaseOrderMatch, type PurchaseOrderMatch } from './sap.js';
+import { fetchPurchaseOrders, fetchPurchaseOrderMatch, type PurchaseOrderMatch, type MatchStatus } from './sap.js';
 
 /**
- * LLM 이 고를 수 있는 조치 넷. parseVerdicts 가 이 밖의 글자는 거른다.
+ * 모델 답에 허용하는 조치 넷. 모델은 글자로 적어 줄 뿐이고, parseVerdicts 가 이 밖의 글자는 거른다.
  * llm이 결과 값을 보고 4개의 조치 중 하나를 반환하도록 설정 ( actions 값 설정은 보류 )
  */
 const actions = z.enum(['입고확인', '송장보류', '업체문의', '대기']);
@@ -38,6 +38,21 @@ const verdictSchema = z.object({
   reason: z.string(),
 });
 type Verdict = z.infer<typeof verdictSchema>;
+
+
+/**
+ * 모델에게 요구할 답 규격. verdictSchema 하나로 검사(zod)와 요청(JSON Schema) 둘 다 쓴다.
+ * strict 는 스키마 밖 칸·값을 금지. 답이 [ … ] 배열 글자로만 온다.
+ */
+const verdictFormat = {
+  type: 'json_schema',
+  json_schema: { 
+    name: 'verdicts',
+    strict: true, 
+    // 배열 안 객체 자체를 jsonschema로 변경한 것 
+    schema: z.toJSONSchema(z.array(verdictSchema)) },
+};
+
 
 /**
  * judge 를 다시 도는 상한. 답 모양이 이만큼 틀리면 포기한다. 없으면 모델이 계속 틀릴 때 안 끝난다.
@@ -171,13 +186,12 @@ async function judge(state: S): Promise<Partial<S>> {
   const messages: Record<string, unknown>[] = [
     {
       role: 'system',
-      content: [
-        '구매 3-way match 불일치 줄마다 조치를 정한다.',
-        `조치는 다음 넷 중 하나만: ${actions.options.join(', ')}.`,
-        'GR_PENDING=입고<발주, GR_OVER=입고>발주, IR_OVER=송장>입고, IR_UNDER=송장<입고, PRICE_DIFF=단가 다름.',
-        '답은 JSON 배열만. 다른 글자 없이. 줄 모양: {"poNumber":"...","itemNumber":10,"action":"...","reason":"한 문장"}.',
-        '입력에 있는 줄을 하나도 빼지 않는다.',
-      ].join('\n'),
+      content: `구매 3-way match 불일치 줄마다 조치를 정한다.
+        조치는 다음 넷 중 하나만: ${actions.options.join(', ')}.
+        GR_PENDING=입고<발주, GR_OVER=입고>발주, IR_OVER=송장>입고, IR_UNDER=송장<입고, PRICE_DIFF=단가 다름.
+        답은 JSON 배열만. 다른 글자 없이. 줄 모양: {"poNumber":"...","itemNumber":10,"action":"...","reason":"한 문장"}.
+        입력에 있는 줄을 하나도 빼지 않는다.`
+      // Structed Output
     },
     { role: 'user', content: JSON.stringify(target) },
   ];
@@ -201,7 +215,7 @@ async function judge(state: S): Promise<Partial<S>> {
   const MAX_STEPS = 3;
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const res = await ask(messages);
+    const res = await ask(messages, undefined, verdictFormat);
 
     /** .find 와 같다. choices[0] 이 없으면 undefined 라 먼저 본다 */
     const choice = res.choices[0];
@@ -329,23 +343,37 @@ export async function runGraph(
     return { ok: false, reason: '조건에 맞는 구매오더가 없다', count: 0, summary: {}, mismatches: [], trace: final.trace };
   }
 
-  const summary: Record<string, number> = {};
-  for (const r of final.rows)
-  summary[r.status] = (summary[r.status] ?? 0) + 1;
+  /**
+   * const summary: Record<string, number> = {};
+   * for (const r of final.rows)
+   * summary[r.status] = (summary[r.status] ?? 0) + 1;
+  */
+  
+  const summary: Record<MatchStatus, number> = { OK: 0, GR_PENDING: 0, GR_OVER: 0, IR_OVER: 0, IR_UNDER: 0, PRICE_DIFF: 0 };
+  for (const r of final.rows) summary[r.status] += 1;
+  
 
   /**
    * SAP 줄(rows) 위에 LLM 판정(verdicts)을 얹는다. 두 배열을 PO번호+항목번호로 짝 맞춘다.
    * map = LOOP AT 불일치줄 … APPEND 새줄. 원본 rows 는 안 바뀌고 새 배열이 나온다.
+   * ThreeWayMatchResult['mismatches'] : ThreeWayMatchResult에서 mismatch 필드만 꺼내 온 것 
    */
-  const mismatches = mismatchesOf(final.rows).map((r) => {
-    /**
-     * READ TABLE verdicts WITH KEY ebeln ebelp. 못 찾으면 undefined.
-     * 여기 오는 r 은 전부 모델에게 보낸 줄이라, 못 찾았다 = 모델이 그 줄을 빼먹었다. 지금은 검사 안 하고 action 없이 내보낸다 (covered 보류).
-     */
-    const v = final.verdicts.find((x) => x.poNumber === r.poNumber && x.itemNumber === r.itemNumber);
-    /** 못 찾음 → SAP 줄 그대로. 찾음 → SAP 줄 칸 전부(...r) + action·reason 두 칸 덧붙인 새 객체 */
-    return v === undefined ? r : { ...r, action: v.action, reason: v.reason };
-  });
+const mismatches: ThreeWayMatchResult['mismatches'] = [];
+for (const r of mismatchesOf(final.rows)) { 
+  /** READ TABLE verdicts WITH KEY. 못 찾으면 undefined 
+   *  r = SICF에서 반환한 행 
+   *  v = llm이 행마다 내린 판정 
+  */
+  const v = final.verdicts.find((x) => x.poNumber === r.poNumber && x.itemNumber === r.itemNumber);
+  // sap가 제공한 행에 대해 llm이 답을 내지 못해 verdict이 존재하지 않는 경우 
+  if (v === undefined) {
+    mismatches.push(r);
+  }
+  // sap가 반환한 줄 뒤에 action과 reason을 붙힘  
+  else {
+    mismatches.push({ ...r, action: v.action, reason: v.reason });
+  }
+}
 
   return { ok: true, count: final.rows.length, summary, mismatches, trace: final.trace };
 }
