@@ -25,32 +25,14 @@ import { createInterface } from 'node:readline/promises';
 import { openHistory, type SessionRow } from './history.js';
 
 /**
- * 스킬 로드 3단계 + 로컬 도구 셋. skills = 시작 때 스캔한 목록, localTools = 도구 정의, runLocalTool = 실행.
+ * 총괄. 부하에게 delegate 로 맡기고 답을 합친다. SYSTEM 도 부하 목록에서 만든다.
  */
-import { skills, localTools, runLocalTool } from './skills.js';
+import { runSupervisor, makeSupervisorSystem } from './supervisor.js';
 
 /**
- * 모델에게 미리 주는 지시. 질문보다 앞에 둬야 그 뒤 전부에 적용된다.
- * 역할 5줄만 남긴다. 구매오더 절차(번호 형식·업체 코드·도구 선택·3-way 호출법)는 src/mcp/agent/skills/po-query/SKILL.md 로 옮겼다.
+ * 부하 정의. 구매 부하 안에 v0.12 의 SYSTEM·스킬 목록·도구 여섯·로컬/MCP 갈림이 다 들어 있다.
  */
-/**
-   * 스킬 로드 ② 목록. 이름·설명만 붙인다. 본문은 모델이 readSkill 을 요청하면 그때 코드가 읽어 준다.
-   * 스킬이 없으면 이 부분이 빈 배열이라 SYSTEM 은 역할 5줄뿐이다.
-   * skills.ts에서 끌고 오기 
-   */
-const skillList =
-  skills.length > 0
-    ? `${skills.map((s) => `- ${s.name}: ${s.description}`).join('\n')}`
-    : '';
-
-const SYSTEM = `너는 SAP 조회 도우미다. 도구로 데이터를 조회하고, 그 결과만으로 한국어로 정리해서 답한다.
-답에 쓰는 값은 도구가 반환한 결과에서 가져온다. 기억이나 추측으로 채우지 마라.
-조회하지 않은 대상을 "없다"고 단정하지 마라. 확인이 필요하면 도구를 먼저 불러라.
-필요한 데이터를 다 모으기 전에 결론을 내지 마라. 부분 조회 상태로 답하지 마라.
-도구의 정보를 보고 사용자의 응답에 답하기 힘든 경우 사용자에게 다시 정확한 값을 되묻는다.
-질문에 맞는 스킬이 있으면 readSkill 로 본문을 먼저 읽고 그 절차를 따른다. 스킬 목록:${skillList}`;
-
-
+import { makeWorkers } from './workers.js';
 
 /**
  * MCP 서버 연결. 프로그램 시작 때 한 번. 서버가 자식 프로세스로 뜨고 초기화 인사가 끝날 때까지 기다린다.
@@ -84,178 +66,17 @@ const mcpTools: OpenAiTool[] = list.tools.map((t) => ({
 }));
 
 /**
- * 모델에게 보내는 도구 목록. 
- * MCP 셋 + 로컬. 모델은 어느 쪽인지 모르고 이름으로만 요청한다. 가르는 건 runLocalTool.
- * ...은 이어붙힌다라고 생각 <> 객체일 경우 똑같지만 같은 값이 있을 경우 후자 값이 덮어씌워진다.
+ * 부하 둘(구매·자재). 총괄이 이 목록으로 delegate 도구와 SYSTEM 을 만든다. main 은 부하를 직접 안 부른다.
  */
-const tools: OpenAiTool[] = [...mcpTools, ...localTools];
+const workers = makeWorkers(mcpTools, client);
 
 /**
  * 대화 이력. 왕복할 때마다 여기에 쌓아서 통째로 다시 보낸다.
  * 서버는 지난 대화를 기억하지 않아 매번 전부 실어 보내야 한다.
  */
 const messages: Record<string, unknown>[] = [
-  { role: 'system', content: SYSTEM },
+  { role: 'system', content: makeSupervisorSystem(workers) },
 ];
-
-/** 최대 왕복 횟수. 모델이 끝을 안 내면 여기서 끊는다 */
-const MAX_STEPS = 20;
-
-/**
- * 질문 하나에 대한 도구 왕복 전체. 이력을 받아 답이 나올 때까지 돌고 답 글자를 돌려준다.
- * 이력은 밖에서 만들어 넘기므로 부를 때마다 이어진다.
- */
-async function runAgent(messages: Record<string, unknown>[]): Promise<string> {
-  /**
-   * 최종 답변을 담을 자리. 반복문이 끝난 뒤 나왔는지 확인한다.
-   */
-  let answer: string | null = null;
-
-  for (let step = 0; step < MAX_STEPS; step++) {
-    const res = await ask(messages, tools);
-
-    /**
-     * READ TABLE 뒤 sy-subrc 확인과 같다. 못 찾으면 값이 없는 상태가 온다.
-     */
-    const choice = res.choices[0];
-    if (!choice) {
-      throw new Error('응답에 답변 칸이 없다');
-    }
-    const calls = choice.message.tool_calls;
-
-    /**
-     * 종료 판단은 finish_reason 으로 한다. stop 이면 답이 끝난 것이다.
-     * 전에는 tool_calls 유무로 봤는데, 그러면 length(잘림)·error 도 답으로 오인한다.
-     */
-    if (choice.finish_reason === 'stop') {
-      /**
-       * 답도 이력에 남긴다. 안 남기면 다음 질문 때 모델이 자기가 뭐라 답했는지 모른다.
-       */
-      messages.push(choice.message);
-      answer = choice.message.content;
-      console.log(`[provider] ${res.provider}`);
-      break;
-    }
-
-    /**
-     * stop 도 tool_calls 도 아니면(length·error·모르는 값) 답이 아니다. 잘린 글을 답으로 찍지 않게 멈춘다.
-     * || !calls 는 논리가 아니라 타입용이다. tool_calls 칸이 ? 라 있다고 확인해야 아래 for 가 컴파일된다.
-     */
-    if (choice.finish_reason !== 'tool_calls' || !calls) {
-      /** 사유를 같이 싣는다. error 일 때 공급자가 choice 안에 error 칸으로 이유를 준다. 없으면 이 문구만으로는 원인을 못 찾는다 */
-      throw new Error(`모델이 끝내지 못했다: finish_reason=${choice.finish_reason} ${JSON.stringify(choice).slice(0, 500)}`);
-    }
-
-    /**
-     * 모델이 "도구를 불러 달라"고 한 그 발언을 이력에 그대로 남긴다.
-     * 빼면 다음 요청에서 도구 결과가 어디에 딸린 것인지 서버가 모른다.
-     */
-    messages.push(choice.message);
-
-    /**
-     * LOOP AT 처럼 요청 하나하나를 돈다.
-     * 결과를 하나라도 빠뜨리면 서버가 짝이 안 맞는다며 거절한다.
-     */
-    for (const call of calls) {
-      /**
-       * 모델의 arguments 는 글자다. 서버는 객체를 받으니 여기서 푼다. 옛 tools.ts 의 parseObject 앞 절반이 이 자리로 왔다.
-       * JSON.parse 는 규격 밖 글자에 멈추므로 TRY 로 감싸고, 실패면 null 로 두어 아래 가드가 잡게 한다.
-       */
-      let args: unknown = null;
-      try {
-        args = JSON.parse(call.function.arguments);
-      } catch {
-        args = null;
-      }
-
-      /**
-       * 객체 가드. 배열·글자·null 이면 서버에 안 보내고 실패를 값으로 이력에 넣는다. 모델이 읽고 다시 시도한다.
-       * continue 는 LOOP 의 다음 줄로 건너뛰기다.
-       * // args의 type 확정 
-       */
-      if (typeof args !== 'object' || args === null || Array.isArray(args)) {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: JSON.stringify({ ok: false, reason: `인자가 객체가 아니다: ${call.function.arguments}` }),
-        });
-        continue;
-      }
-
-      /**
-       * callTool 의 arguments 타입(type)은 "키가 글자인 객체" 라서 object 를 그대로 못 넣는다.
-       * { ...args } 로 칸을 전부 펼쳐 새 객체를 만들면 그 모양이 된다. 
-       * Record<string, unknown> == mcp sdk에서 인자값의 형태를 미리 정의해뒀기 때문에 이에 한 번 맞추는게 좋음 
-       * 없어도 문제는 x 
-       */
-      const argsRecord: Record<string, unknown> = { ...args };
-
-      /**
-       * 갈림. 로컬 도구(readSkill 등)면 이 프로세스에서 끝나고 결과 글자가 온다. null 이면 MCP 서버로.
-       * 스킬 로드 ③ 본문이 실제로 읽히는 자리가 여기다.
-       */
-      const local = runLocalTool(call.function.name, argsRecord);
-
-      /**
-       * MCP 서버에 실행 요청. server/index.ts → tools.ts → sap.ts → SAP 을 거쳐 돌아올 때까지 기다린다.
-       * await 을 빼면 결과가 아니라 "나중에 준다"는 표가 실려 아래에서 {} 로 찍힌다.
-       * 세 번째 인자는 제한시간. 기본 60초인데 threeWayMatch 는 실측 5분(LLM 공급자가 느림)이라 10분으로.
-       * 서버가 text 에 이미 글자로 싸 놓았으니 textOf 로 꺼내기만 한다.
-       */
-      let content: string;
-      if (local !== null) {
-        content = local;
-      } else {
-        /** 두 번째 인자(결과 스키마)는 안 쓴다. 세 번째(제한시간)를 넣으려면 그 자리를 undefined 로 채워야 한다 */
-        const res = await client.callTool(
-          { name: call.function.name, arguments: argsRecord },
-          undefined,
-          { timeout: 600_000 },
-        );
-        // mcp는 서버기 때문에 값을 텍스트로 묶어서 줌 
-        content = textOf(res);
-      }
-
-      /**
-       * 도구 실행 결과를 이력에 넣는다. 로컬이든 MCP 든 같은 모양(role tool + 글자)이라 뒤 코드는 구분 안 한다.
-       */
-      messages.push({
-        role: 'tool',
-        tool_call_id: call.id,
-        content,
-      });
-    }
-  }
-
-  /**
-   * 상한까지 돌았는데 답이 없으면 알린다.
-   * 안 막으면 아무것도 안 찍히고 조용히 끝나 원인을 못 찾는다.
-   */
-  if (answer === null) {
-    throw new Error(`왕복 ${MAX_STEPS}회 안에 답이 안 나왔다`);
-  }
-
-  return answer;
-}
-
-/**
- * MCP 결과에서 text 글자를 꺼낸다. mcp-check.ts 의 bodyOf 와 같은 가드인데 JSON.parse 는 안 한다.
- * 글자 그대로 tool 메시지에 실으면 모델이 읽는다. 우리 서버는 항상 text 하나를 주기로 했으니 아니면 코드가 어긋난 것이다.
- */
-function textOf(res: object): string {
-  if (!('content' in res) || !Array.isArray(res.content)) {
-    throw new Error(`MCP 결과에 content 배열이 없다 ${JSON.stringify(res)}`);
-  }
-  const first: unknown = res.content[0];
-  if (
-    typeof first !== 'object' || first === null ||
-    !('type' in first) || first.type !== 'text' ||
-    !('text' in first) || typeof first.text !== 'string'
-  ) {
-    throw new Error(`MCP 결과 content[0] 이 text 가 아니다 ${JSON.stringify(res)}`);
-  }
-  return first.text;
-}
 
 /**
  * 첫 왕복이 끝난 뒤 제목 한 줄을 모델에게 짓게 한다. 도구 없이 부른다. 대화 이력은 안 넘기고 두 줄짜리 새 대화다.
@@ -374,11 +195,14 @@ while (true) {
   messages.push({ role: 'user', content: question });
 
   /**
-   * TRY…CATCH…ENDTRY. runAgent 안의 throw 를 여기서 받는다.
+   * TRY…CATCH…ENDTRY. runSupervisor 안의 throw 를 여기서 받는다.
    * 안 받으면 질문 하나 실패로 프로그램이 끝나고 앞 대화가 다 날아간다.
    */
   try {
-    const answer = await runAgent(messages);
+    /**
+     * 총괄 루프. trace(부른 부하 이름)는 검증 파일이 쓰고 여기선 안 본다.
+     */
+    const { answer } = await runSupervisor(messages, workers);
     console.log(answer);
 
     /**

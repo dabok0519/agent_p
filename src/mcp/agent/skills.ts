@@ -122,7 +122,7 @@ export const localTools: OpenAiTool[] = [
  * 결과 모양 { ok, … } 글자는 MCP 도구와 같다. 이력에 넣는 코드와 저장 코드가 안 바뀐다.
  */
 /**
- * main.ts 의 runAgent 가 도구 요청마다 먼저 부른다.
+ * workers.ts 의 runPurchaseTool 이 도구 요청마다 먼저 부른다.
  */
 export function runLocalTool(name: string, args: Record<string, unknown>): string | null {
   if (name === 'readSkill') {
