@@ -7,7 +7,7 @@ import { z } from 'zod';
 /**
  * 실제 SAP 을 부르는 함수와 조건 모양을 가져온다. 상대 경로는 .js 확장자가 필요하다.
  */
-import { fetchPurchaseOrders, fetchPurchaseOrderDetails, type PurchaseOrderQuery, type PurchaseOrderDetailQuery } from './sap.js';
+import { fetchPurchaseOrders, fetchPurchaseOrderDetails, fetchMaterials, type PurchaseOrderQuery, type PurchaseOrderDetailQuery } from './sap.js';
 
 /**
  * 3-way match 그래프. 안이 LangGraph 인 건 이 import 하나로만 드러난다.
@@ -33,7 +33,7 @@ export const searchInputSchema = z.object({
 });
 
 export const searchDescription =
-  '구매오더 헤더 목록을 조회한다. 줄마다 poNumber·companyCode·vendor·orderDate·currency. 조건 넷(poNumber·vendor·companyCode·currency)은 필요한 것만 넣는다. 둘 이상 넣으면 전부 만족하는 줄만 온다(OR 없음). 하나도 안 넣으면 전체.';
+  '구매오더 헤더 목록을 조회한다. 줄마다 poNumber·companyCode·vendor·orderDate·currency. 조건 넷(poNumber·vendor·companyCode·currency)은 필요한 것만 넣는다. 둘 이상 넣으면 전부 만족하는 줄만 온다(OR 없음). 하나도 안 넣으면 전체. 헤더 질문은 이 결과로 답하고 끝낸다. 품목은 사용자가 물었을 때만 getPurchaseOrderDetails.';
 
 /**
  * 항목 조회 인자 스키마. z.array(z.string()) 이 옛 Array.isArray + LOOP 안 typeof 다.
@@ -70,6 +70,18 @@ export const matchDescription =
   '구매오더 항목마다 발주·입고·송장 수량과 단가를 맞춰 보는 3-way match. 상태별 건수(summary)와 불일치 줄(mismatches, 조치 action·이유 reason 포함)을 돌려준다. 조건 없이 부르면 전체 오더.';
 
 type MatchInput = z.infer<typeof matchInputSchema>;
+
+/**
+ * 자재 조회 인자 스키마. keywords 하나뿐이고 선택. 없으면 전체(18건).
+ */
+export const materialsInputSchema = z.object({
+  keywords: z.array(z.string()).optional().describe('자재번호나 자재명 일부 배열 (예: ["SMPS", "ST75"]). 번호·이름 어느 쪽이든 포함하면 온다. 여러 개면 하나라도 맞으면 온다. 없으면 전체 자재.'),
+});
+
+export const materialsDescription =
+  '자재 마스터와 창고별 가용재고를 조회한다. 줄마다 material·description·unit·plant·storageLocation·availableQty. 자재 하나에 창고가 여럿이면 여러 줄. 재고가 없는 자재는 plant·storageLocation 빈 값, availableQty 0. 정확한 자재번호를 몰라도 이름 일부(예: "SMPS")로 찾는다.';
+
+type MaterialsInput = z.infer<typeof materialsInputSchema>;
 
 /**
  * index.ts 의 registerTool 콜백이 검사 통과값을 넘겨 부른다.
@@ -122,6 +134,24 @@ export async function runThreeWayMatch(input: MatchInput) {
 
   try {
     return await runGraph(q, input.chunkSize ?? 50);
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * 자재 조회 실행. 구조는 runSearchPurchaseOrders 와 같다. 조건이 하나라 옮기는 줄도 하나.
+ */
+/**
+ * index.ts 의 registerTool 콜백이 검사 통과값을 넘겨 부른다.
+ */
+export async function runSearchMaterials(input: MaterialsInput) {
+  const q: { keywords?: string[] } = {};
+  if (input.keywords !== undefined) q.keywords = input.keywords;
+
+  try {
+    const rows = await fetchMaterials(q);
+    return { ok: true, count: rows.length, query: q, rows };
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   }

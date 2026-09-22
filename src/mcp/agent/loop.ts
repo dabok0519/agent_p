@@ -10,7 +10,7 @@ import { ask, type OpenAiTool } from './openrouter.js';
 
 /**
  * 도구 실행 함수 모양. 이름과 인자를 받아 결과 글자를 돌려준다.
- * 담당은 runPurchaseTool(로컬 ?? MCP), 총괄은 delegateToWorker(담당 돌리기). 루프는 그 안이 뭔지 모른다.
+ * 담당은 runMcpOrLocalTool(로컬 ?? MCP), 총괄은 delegateToWorker(담당 돌리기). 루프는 그 안이 뭔지 모른다.
  */
 /**
  * workers.ts·supervisor.ts 가 이 모양으로 runTool 을 만든다.
@@ -35,6 +35,8 @@ export async function runToolLoop(messages: Record<string, unknown>[], tools: Op
   let answer: string | null = null;
 
   for (let step = 0; step < MAX_STEPS; step++) {
+    // supervisor : 위임도구 1개와 system & 프롬프트 
+    // 
     const res = await ask(messages, tools);
 
     /**
@@ -86,6 +88,7 @@ export async function runToolLoop(messages: Record<string, unknown>[], tools: Op
        */
       let args: unknown = null;
       try {
+        // { worker: '자재 조회 도우미', task: 'SMPS 자재의 창고별 가용재고를 조회해 줘' }
         args = JSON.parse(call.function.arguments);
       } catch {
         args = null;
@@ -112,6 +115,8 @@ export async function runToolLoop(messages: Record<string, unknown>[], tools: Op
        * TS 에서 object 는 "객체인 건 알겠는데 키가 뭔지는 전혀 모름"라서 그대로는 못 넣음 
        * 반환 타입을 맞춘다. 
        */
+      /** 어느 도구를 어떤 인자로 요청했는지 로그. 총괄이면 delegate, 담당이면 searchMaterials 등이 찍혀 흐름이 보인다 */
+      console.log(`[tool] ${call.function.name} ${call.function.arguments}`);
       const content = await runTool(call.function.name, args as Record<string, unknown>);
 
       /**
@@ -141,7 +146,7 @@ export async function runToolLoop(messages: Record<string, unknown>[], tools: Op
  * 우리 서버는 항상 text 하나를 주기로 했으니 아니면 코드가 어긋난 것이다.
  */
 /**
- * workers.ts 의 runPurchaseTool 이 callTool 결과에 쓴다.
+ * workers.ts 의 runMcpOrLocalTool 이 callTool 결과에 쓴다.
  */
 export function textOf(res: object): string {
   if (!('content' in res) || !Array.isArray(res.content)) {

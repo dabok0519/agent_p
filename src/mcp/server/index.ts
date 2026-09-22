@@ -22,6 +22,9 @@ import {
   matchInputSchema,
   matchDescription,
   runThreeWayMatch,
+  materialsInputSchema,
+  materialsDescription,
+  runSearchMaterials,
 } from './tools.js';
 
 /**
@@ -63,6 +66,18 @@ server.registerTool(
   { description: matchDescription, inputSchema: matchInputSchema },
   async (input) => {
     const result = await runThreeWayMatch(input);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: !result.ok };
+  },
+);
+
+/**
+ * 자재 조회. 자재 부하(agent/workers.ts)가 쓰는 첫 도구. 등록 모양은 위 셋과 같다.
+ */
+server.registerTool(
+  'searchMaterials',
+  { description: materialsDescription, inputSchema: materialsInputSchema },
+  async (input) => {
+    const result = await runSearchMaterials(input);
     return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: !result.ok };
   },
 );

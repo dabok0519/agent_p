@@ -57,11 +57,11 @@ assert.deepEqual(r2.trace, []);
 console.log('② 날씨:', r2.trace, '|', r2.answer.slice(0, 80));
 
 /**
- * ③ 자재 질문 → 자재 부하는 불리되 도구가 없어 ok:false. 그 사유("도구 없음")가 답까지 전달.
+ * ③ 자재 질문 → 자재 부하 한 번. 질문에 없는 자재번호(SMPS 검색 결과 둘 중 하나)가 답에 있으면 실제로 조회한 것.
  */
-const r3 = await askSupervisor('자재 ST75P211A1/WHE 재고 알려줘');
+const r3 = await askSupervisor('SMPS 자재 재고 알려줘');
 assert.deepEqual(r3.trace, ['자재 조회 도우미']);
-assert.match(r3.answer, /도구/);
+assert.match(r3.answer, /ST75P211A1|ML92A201563A/);
 console.log('③ 자재:', r3.trace, '|', r3.answer.slice(0, 80));
 
 await client.close();

@@ -232,3 +232,38 @@ export async function fetchPurchaseOrderMatch(q: { poNumbers?: string[] }): Prom
 
   return callSap('/sap/bc/z_demo/z_match', params, z.array(sapMatch));
 }
+
+/**
+ * z_material 한 줄 = { MATNR, MAKTX, MEINS, WERKS, LGORT, LABST }. 자재 × 창고 한 줄.
+ * 재고 없는 자재는 WERKS·LGORT 빈 글자, LABST 0 (브라우저 확인: 10.000 → 숫자).
+ */
+const sapMaterial = z
+  .object({ MATNR: z.string(), MAKTX: z.string(), MEINS: z.string(), WERKS: z.string(), LGORT: z.string(), LABST: z.number() })
+  .transform((r) => ({
+    material: r.MATNR,
+    description: r.MAKTX,
+    unit: r.MEINS,
+    plant: r.WERKS,
+    storageLocation: r.LGORT,
+    availableQty: r.LABST,
+  }));
+
+export type Material = z.infer<typeof sapMaterial>;
+
+/**
+ * 자재 마스터 + 창고 재고를 SAP 에서 받는다. 검색어는 자재번호·자재명 부분 일치이고 ABAP 이 RANGE CP 로 거른다.
+ * 검색어가 없으면 TEXT 를 안 보내 ABAP 이 전체를 돌려준다 (z_match 와 같은 규칙).
+ */
+/**
+ * tools.ts 의 searchMaterials 가 부른다. sap-check.ts 는 직접 부른다.
+ */
+export async function fetchMaterials(q: { keywords?: string[] }): Promise<Material[]> {
+  // q.keywords = ['SMPS', 'HEAT SINK']
+  // params.TEXT = 'SMPS,HEAT SINK'
+  // → URL: /z_mm?TEXT=SMPS,HEAT%20SINK
+  const params: Record<string, string> = {};
+  if (q.keywords && q.keywords.length > 0) params.TEXT = q.keywords.join(',');
+
+  return callSap('/sap/bc/z_demo/z_mm', params, z.array(sapMaterial));
+}
+

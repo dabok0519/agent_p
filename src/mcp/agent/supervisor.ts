@@ -25,7 +25,7 @@ export function makeSupervisorSystem(workers: Worker[]): string {
 /**
  * list 
  * '- 구매 조회 도우미: 구매오더 헤더·품목 조회, 3-way match 검산. SAP 구매 데이터 질문은 여기.
- *  - 자재 조회 도우미: 자재 마스터·재고 조회. 아직 도구가 없다.'
+ *  - 자재 조회 도우미: 자재 마스터(자재명·단위)와 창고별 가용재고 조회. SAP 자재·재고 질문은 여기.'
 */
 const list = workers.map((w) => `- ${w.name}: ${w.description}`).join('\n');
 
@@ -54,6 +54,8 @@ function makeDelegateTool(workers: Worker[]): OpenAiTool {
       parameters: {
         type: 'object',
         properties: {
+          // workers를 모두 map하여 load한 다음 enum: ['구매 조회 도우미', '자재 조회 도우미']으로 변경하여
+          // Input schema 제공  
           worker: { type: 'string', enum: workers.map((w) => w.name), description: '맡길 부하 이름' },
           task: { type: 'string', description: '부하에게 맡길 일. 한국어 한 문장' },
         },
@@ -83,6 +85,7 @@ export async function runSupervisor(messages: Record<string, unknown>[], workers
   const delegateToWorker: ToolRunner = async (name, args) => {
     if (name !== 'delegate') return JSON.stringify({ ok: false, reason: `모르는 도구: ${name}` });
     // 인자값과 workers배열을 비교하여 맞는 도우미를 worker에 저장 
+    // worker : 구매 오더 도우미 == 이름 파싱 
     const worker = workers.find((w) => w.name === args.worker);
 
     if (!worker) return JSON.stringify({ ok: false, reason: `부하 없음: ${String(args.worker)}` });
@@ -101,6 +104,7 @@ export async function runSupervisor(messages: Record<string, unknown>[], workers
   /**
    * 루프에 셋을 넘긴다. delegateToWorker 는 지금 실행하는 게 아니라 "요청 오면 이렇게 처리해라" 는 절차를 건네는 것.
    * runToolLoop 가 모델의 delegate 요청을 받을 때마다 그 절차를 실행한다. 요청이 없으면(날씨 질문) 한 번도 안 돈다.
+   * tools로 인해 Worker와 task가 정해진다 이에 따라 
    */
   const answer = await runToolLoop(messages, tools, delegateToWorker);
   return { answer, trace };

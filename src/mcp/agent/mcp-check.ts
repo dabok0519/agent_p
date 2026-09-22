@@ -42,7 +42,7 @@ const list = await client.listTools();
 
 assert.deepEqual(
   list.tools.map((t) => t.name),
-  ['searchPurchaseOrders', 'getPurchaseOrderDetails', 'threeWayMatch'],
+  ['searchPurchaseOrders', 'getPurchaseOrderDetails', 'threeWayMatch', 'searchMaterials'],
 );
 console.log('목록:', list.tools.map((t) => t.name).join(', '));
 
@@ -93,6 +93,14 @@ const r3 = await client.callTool({ name: 'getPurchaseOrderDetails', arguments: {
 const b3 = bodyOf(r3);
 assert.equal(b3.ok, true, `상세 실패: ${b3.reason}`);
 console.log('상세 전체:', b3.count, '건');
+
+/**
+ * ⑤ 자재 검색어 하나. sap-check 와 같은 여덟 줄(자재 둘 × 창고).
+ */
+const r4 = await client.callTool({ name: 'searchMaterials', arguments: { keywords: ['SMPS'] } });
+const b4 = bodyOf(r4);
+assert.equal(b4.ok, true, `자재 실패: ${b4.reason}`);
+console.log('자재:', b4.count, '건');
 
 /**
  * 안 닫으면 자식 프로세스가 남아 프로그램이 안 끝난다.
