@@ -202,7 +202,9 @@ while (true) {
     /**
      * 총괄 루프. trace(부른 부하 이름)는 검증 파일이 쓰고 여기선 안 본다.
      */
-    const { answer } = await runSupervisor(messages, workers);
+    const { answer, trace } = await runSupervisor(messages, workers);
+    /** 어느 길로 갔는지 한 줄. jev: 접두어면 코드가 Jev 답대로 부하를 직접 부른 것, 없으면 총괄(Qwen)이 위임한 것 */
+    console.log(`[route] ${trace.length === 0 ? '부하 없음' : trace.join(' > ')}`);
     console.log(answer);
 
     /**
