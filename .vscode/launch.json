@@ -2,6 +2,21 @@
   "version": "0.2.0",
   "configurations": [
     {
+      // hook 은 stdin 으로 JSON 을 받아야 돌아간다. "현재 파일" 로 F5 하면 stdin 이 없어 12줄에서 영원히 기다린다.
+      // 그래서 cmd 의 echo 로 JSON 을 넣어 준다 (PowerShell 파이프는 BOM 이 붙어 JSON.parse 가 깨진다. 실측).
+      // 다른 hook 을 볼 땐 아래 JSON 과 파일명만 바꾼다.
+      "name": "stop-gate 디버그",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "cmd.exe",
+      "runtimeArgs": ["/c", "echo {\"stop_hook_active\":false}| node hook-lab/stop-gate.mjs"],
+      "cwd": "${workspaceFolder}",
+      "env": { "CLAUDE_PROJECT_DIR": "${workspaceFolder}" },
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "autoAttachChildProcesses": true
+    },
+    {
       // F5 는 지금 편집기에 열려 있는 파일을 돌린다. 특정 파일로 고정하지 않는다.
       "name": "현재 파일",
       "type": "node",
