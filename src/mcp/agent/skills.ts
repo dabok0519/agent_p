@@ -22,7 +22,7 @@ import { execFileSync } from 'node:child_process';
 
 /**
  * 스킬 폴더. .claude/ 가 아니라 src/ 밑이다. .claude/ 는 Claude Code 의 설정 폴더라 거기 두면 그 도구가 자기 스킬로 읽어 버린다 (실제로 그랬다, 사수 지적 2026-09-19).
- * 스캔(loadSkills)과 readFile 가드가 같은 값을 써야 해서 한 곳에 둔다.
+ * 스캔(loadSkills)이 쓴다. runScript 는 스킬 폴더(skill.dir) 기준으로 경로를 푼다.
  */
 const SKILLS_ROOT = 'src/mcp/agent/skills';
 
@@ -43,10 +43,17 @@ function loadSkills(root: string): Skill[] {
   /** root = 'src/mcp/agent/skills'. entry 는 그 밑 항목 하나씩 (폴더 po-query, 파일이면 건너뜀) */
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    /** dir = 'src/mcp/agent/skills/po-query'. 스킬 폴더 경로. */
+    /** dir = 'src/mcp/agent/skills/po-query'.
+     *  == 스킬 폴더 경로. */
     const dir = join(root, entry.name);
-    /** file = 'src/mcp/agent/skills/po-query/SKILL.md'. */
+    
+    /** file = 'src/mcp/agent/skills/po-query/SKILL.md'. 
+     * == skill.md 파일 실제 경로 
+     * 여기서 직접 SKILL.md 파일 경로를 여러개 추가하기 ? 
+    */
     const file = join(dir, 'SKILL.md');
+
+
     if (!existsSync(file)) continue;
 
     /**
@@ -54,8 +61,10 @@ function loadSkills(root: string): Skill[] {
      * \r?\n 은 Windows 줄바꿈(CRLF) 대비. ?. 는 못 찾았을 때 뒤가 안 터지게(READ TABLE 뒤 sy-subrc).
      * 하나라도 없으면 스킬로 안 친다. 모델이 readSkill 을 요청할 근거가 없어서.
      */
+
+    // 실제 skill.md 파일 읽기 
     const text = readFileSync(file, 'utf8');
-    // name , description 파싱
+    // name , description파트만 파싱
     const front = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     // front 변수에서 name만 파싱
     const name = front?.[1]?.match(/^name:\s*(.+)$/m)?.[1]?.trim();
@@ -71,6 +80,8 @@ function loadSkills(root: string): Skill[] {
 
 /**
  * 시작 때 한 번 스캔한 목록. main.ts 가 SYSTEM 의 스킬 목록(② 목록)을 만들 때 쓴다.
+ * skills = [{ name , description, dir }]
+ * ㄴ system prompt에 들어가는 것 
  */
 export const skills = loadSkills(SKILLS_ROOT);
 console.log(`[skill] ${skills.length}개: ${skills.map((s) => s.name).join(', ') || '(없음)'}`);
@@ -78,9 +89,9 @@ console.log(`[skill] ${skills.length}개: ${skills.map((s) => s.name).join(', ')
 /**
  * 스킬 로드 ③ 본문 — 로컬 도구. MCP 서버가 아니라 이 프로세스 안에서 처리한다. 파일만 읽으니 SAP 서버로 보낼 이유가 없다.
  * MCP 도구는 SDK 가 zod 에서 JSON Schema 를 만들어 줬지만, 로컬은 parameters 를 손으로 적는다. 그게 SDK 가 해 주던 일이다.
- */
-/**
+
  * main.ts 가 MCP 도구 목록 뒤에 이어 붙여 모델에게 보낸다.
+ * llm에게 갈 도구 목록  (skill.md 파일 / 형식 검사 실행 파일 / )
  */
 export const localTools: OpenAiTool[] = [
   {
@@ -89,14 +100,6 @@ export const localTools: OpenAiTool[] = [
       name: 'readSkill',
       description: '스킬 본문(SKILL.md)을 읽는다. SYSTEM 의 스킬 목록에 있는 이름을 넣는다. 절차를 따르기 전에 먼저 읽는다.',
       parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'readFile',
-      description: '스킬 폴더(src/mcp/agent/skills/) 안 파일을 읽는다. SKILL.md 가 가리키는 references/ 등. 폴더 밖은 거부.',
-      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
     },
   },
   {
@@ -125,6 +128,7 @@ export const localTools: OpenAiTool[] = [
  * workers.ts 의 runMcpOrLocalTool 이 도구 요청마다 먼저 부른다.
  */
 export function runLocalTool(name: string, args: Record<string, unknown>): string | null {
+
   if (name === 'readSkill') {
     /** READ TABLE skills WITH KEY name. 없으면 실패를 값으로. 모델이 읽고 이름을 고친다 */
     const skill = skills.find((s) => s.name === args.name);
@@ -134,25 +138,17 @@ export function runLocalTool(name: string, args: Record<string, unknown>): strin
     return JSON.stringify({ ok: true, content: readFileSync(join(skill.dir, 'SKILL.md'), 'utf8') });
   }
 
-  if (name === 'readFile') {
-    /**
-     * 경로 가드. resolve 로 절대 경로를 만든 뒤 스킬 폴더로 시작하는지 본다.
-     * 없으면 ../../.env 처럼 아무 파일이나 읽힌다. readSkill 은 이름으로 목록에서 찾으니 이 가드가 필요 없다.
-     */
-    const root = resolve(SKILLS_ROOT);
-    const full = resolve(String(args.path));
-    if (!full.startsWith(root)) return JSON.stringify({ ok: false, reason: `스킬 폴더 밖: ${String(args.path)}` });
-    if (!existsSync(full)) return JSON.stringify({ ok: false, reason: `파일 없음: ${String(args.path)}` });
-    // json으로 넘길 필요는 없지만 mcp랑 통일성을 유지하기 위해...
-    return JSON.stringify({ ok: true, content: readFileSync(full, 'utf8') });
-  }
-
   if (name === 'runScript') {
+    
     const skill = skills.find((s) => s.name === args.skill);
-    if (!skill) return JSON.stringify({ ok: false, reason: `스킬 없음: ${String(args.skill)}` });
 
-    /** readFile 과 같은 가드. 스킬 폴더 기준으로 풀고, 그 폴더 밖이면 거부 */
+
+    if (!skill) return JSON.stringify({ ok: false, reason: `스킬 없음: ${String(args.skill)}` });
+    /** 경로 가드. resolve 로 스킬 폴더 기준 절대 경로를 만든 뒤 그 폴더 밖이면 거부. 없으면 ../../ 로 아무 파일이나 실행된다 */
+   
     const full = resolve(skill.dir, String(args.script));
+
+
     if (!full.startsWith(resolve(skill.dir))) return JSON.stringify({ ok: false, reason: `스킬 폴더 밖: ${String(args.script)}` });
     if (!existsSync(full)) return JSON.stringify({ ok: false, reason: `스크립트 없음: ${String(args.script)}` });
 
@@ -162,9 +158,10 @@ export function runLocalTool(name: string, args: Record<string, unknown>): strin
     /**
      * exit code 가 0 이 아니면 execFileSync 가 throw 한다. TRY 로 받아 실패를 값으로 바꾼다.
      * 에러 객체 안에 status(exit code)·stdout·stderr 가 붙어 있어 그걸 그대로 싣는다. 모델이 사유를 읽는다.
+     * -X utf8: Windows 에서 python 의 stdout 기본 인코딩이 cp949 라, 없으면 한글 사유가 깨진 채 모델에게 간다.
      */
     try {
-      const stdout = execFileSync('python', [full, ...argv], { encoding: 'utf8' });
+      const stdout = execFileSync('python', ['-X', 'utf8', full, ...argv], { encoding: 'utf8' });
       return JSON.stringify({ ok: true, exitCode: 0, stdout });
     } catch (e) {
       const err = e as { status?: number; stdout?: string; stderr?: string };
