@@ -129,8 +129,11 @@ async function fetchChunk(state: S): Promise<Partial<S>> {
 }
 
 /**
- * LLM 답 글자 → 검사된 배열 + 실패 사유. 틀리면 빈 배열과 어디서 틀렸는지 글자. [ ] 자르기 → JSON.parse 가드 → zod 모양 검사.
- * 모델이 쓴 글이라(ABAP 값 아님) 모양을 못 믿는다. 그래서 세 겹. 사유는 judge 가 재시도 때 모델에게 되돌려 준다.
+ * LLM 답 글자 → 검사된 배열 + 실패 사유. 틀리면 빈 배열과 어디서 틀렸는지 글자. 
+ * [ ] 자르기
+ * JSON.parse 
+ * 가드 → zod 모양 검사.
+ *  그래서 세 겹. 사유는 judge 가 재시도 때 모델에게 되돌려 준다.
  */
 function parseVerdicts(text: string): { verdicts: Verdict[]; error: string } {
   /**

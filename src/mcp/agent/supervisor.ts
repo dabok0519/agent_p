@@ -66,7 +66,7 @@ function makeDelegateTool(workers: Worker[]): OpenAiTool {
           worker: { type: 'string', enum: workers.map((w) => w.name), description: '맡길 부하 이름' },
           task: { type: 'string', description: '부하에게 맡길 일. 한국어 한 문장' },
         },
-        required: ['worker', 'task'],
+        required: ['worker','task'],
       },
     },
   };
@@ -97,7 +97,8 @@ export async function runSupervisor(messages: Record<string, unknown>[], workers
 
     if (!worker) return JSON.stringify({ ok: false, reason: `부하 없음: ${String(args.worker)}` });
     trace.push(worker.name);
-    return runWorker(worker, String(args.task ?? ''));
+    let result = runWorker(worker, String(args.task ?? ''))
+    return result ;
   };
 
   /**

@@ -44,7 +44,7 @@ export type Worker = {
  */
 const skillList =
   skills.length > 0
-    ? `\n3-way match(검산·불일치·입고·송장 확인)를 물었을 때만 readSkill 로 스킬 본문을 먼저 읽고 그 절차를 따른다. 그 외 질문에는 스킬을 읽지 않는다. 스킬 목록:\n${skills.map((s) => `- ${s.name}: ${s.description}`).join('\n')}`
+    ? `\n 3way match(검산·불일치·입고·송장 확인)를 물었을 때만 readSkill 로 스킬 본문을 먼저 읽고 그 절차를 따른다. 그 외 질문에는 스킬을 읽지 않는다. 스킬 목록:\n${skills.map((s) => `- ${s.name}: ${s.description}`).join('\n')}`
     : '';
 
 /**
@@ -78,6 +78,8 @@ const MATERIAL_SYSTEM =
  * client : main.ts 가 만든 MCP 서버와의 연결 통로 객체
  */
 export function makeWorkers(mcpTools: OpenAiTool[], client: Client): Worker[] {
+
+  
   /**
    * 담당 공용 도구 실행. 구매·자재 둘 다 사용. 로컬 도구(readSkill 등)면 여기서 끝, null 이면 MCP 서버로
    * callTool 두 번째 인자(결과 스키마)는 안 쓴다. 세 번째(제한시간)를 넣으려면 그 자리를 undefined 로 채운다.

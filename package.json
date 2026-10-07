@@ -5,7 +5,8 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "tsx src/mcp/agent/main.ts"
+    "start": "tsx src/mcp/agent/main.ts",
+    "server": "tsx src/web/server.ts"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +21,7 @@
     "@typesafe-ai/sdk": "^0.6.0",
     "ai": "^7.0.93",
     "dotenv": "^17.4.2",
+    "hono": "^4.13.13",
     "zod": "^4.5.4"
   },
   "devDependencies": {
